@@ -6,7 +6,19 @@ const ADDON_NAME = 'Ricky Addon';
 const ADDON_VERSION = '1.0.0';
 const VIDSRC_API = 'https://api.vidsrc.me/search';
 
-// Manifest - tells Stremio what this addon does
+// Create axios instance with anti-bot headers
+const axiosInstance = axios.create({
+  timeout: 10000,
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://vidsrc.me/',
+    'Origin': 'https://vidsrc.me'
+  }
+});
+
+// Manifest
 app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'com.ricky.vidsrc',
@@ -21,19 +33,15 @@ app.get('/manifest.json', (req, res) => {
   });
 });
 
-// Stream endpoint - returns available streams
+// Stream endpoint
 app.get('/stream/:type/:id.json', async (req, res) => {
   try {
     const { type, id } = req.params;
     
-    // Query VidSrc API
-    const response = await axios.get(`${VIDSRC_API}?query=${id}`, {
-      timeout: 10000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
-      }
-    });
-
+    // Remove 'tt' prefix for API call
+    const cleanId = id.replace('tt', '');
+    
+    const response = await axiosInstance.get(`${VIDSRC_API}?query=${cleanId}`);
     const streams = parseVidSrcResponse(response.data, type);
     
     res.json({ streams: streams || [] });
@@ -43,16 +51,15 @@ app.get('/stream/:type/:id.json', async (req, res) => {
   }
 });
 
-// Parse VidSrc response and format for Stremio
+// Parse response
 function parseVidSrcResponse(data, type) {
-  if (!data || !data.results) return [];
+  if (!data || !data.results || data.results.length === 0) return [];
 
   const streams = [];
-  const result = data.results[0]; // Get first result
+  const result = data.results[0];
 
   if (!result || !result.sources) return [];
 
-  // Quality priority: 4K > 1080p > 720p > 480p
   const qualityPriority = {
     '4K': 0,
     '2160p': 0,
@@ -62,14 +69,12 @@ function parseVidSrcResponse(data, type) {
     'Unknown': 4
   };
 
-  // Language preference: English, Tamil, Hindi
   const languages = ['English', 'Tamil', 'Hindi', 'Dubbed', 'Unknown'];
 
-  result.sources.forEach((source, index) => {
+  result.sources.forEach((source) => {
     const quality = source.quality || 'Unknown';
     const language = source.language || 'Unknown';
 
-    // Only include if language matches
     if (!languages.includes(language) && language !== 'Unknown') return;
 
     const stream = {
@@ -86,7 +91,6 @@ function parseVidSrcResponse(data, type) {
     streams.push(stream);
   });
 
-  // Sort by quality first, then language
   streams.sort((a, b) => {
     if (a.qualityScore !== b.qualityScore) {
       return a.qualityScore - b.qualityScore;
@@ -94,7 +98,6 @@ function parseVidSrcResponse(data, type) {
     return a.languageScore - b.languageScore;
   });
 
-  // Format for Stremio
   return streams.slice(0, 20).map(s => ({
     url: s.url,
     title: s.title,
