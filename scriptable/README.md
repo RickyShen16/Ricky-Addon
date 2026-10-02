@@ -19,6 +19,12 @@ Home-screen and lock-screen widgets for [Scriptable](https://scriptable.app). Pa
 - Lock-screen widgets are single-tint: everything is white at different opacities, and dark artwork nearly disappears.
 - Run any lock script inside Scriptable to get an enlarged preview (`PREVIEW = "rect" | "circle"`).
 
+## Final result
+
+`docs/final-lockscreen.png` is the finished lock screen: Simkl Lock (Gachiakuta with its TMDB logo, episode ticks, `E24` pill, 83%, 4 episodes left) on the left and Manga Lock (Kagurabachi, Ch 132, `SEP 27`) on the right.
+
+![Final lock screen](../docs/final-lockscreen.png)
+
 ## Design explorations
 
 `docs/previews/` holds the mockups from the design pass (rectangle and small-slot options for both trackers). They are mockups, not screenshots of the real widgets.
