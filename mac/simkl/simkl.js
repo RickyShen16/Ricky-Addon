@@ -63,7 +63,7 @@ function normalize(lists) {
 }
 
 // ---------- macOS side ----------
-function sh(cmd) { return Application.currentApplication().doShellScript(cmd); }
+function sh(cmd) { const a = Application.currentApplication(); a.includeStandardAdditions = true; return a.doShellScript(cmd); }
 const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
 function home() { ObjC.import("Foundation"); return $.NSHomeDirectory().js; }
 function readText(p) { try { return sh("cat " + q(p) + " 2>/dev/null"); } catch (e) { return ""; } }

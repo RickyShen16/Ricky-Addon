@@ -10,7 +10,7 @@ const SHOW_TITLE = true;          // false = icon only in the menu bar
 const WATCH_APP = "nuvio";        // "nuvio" | "simkl"
 const THUMBS = true;              // poster thumbnails in the dropdown
 
-function sh(cmd) { return Application.currentApplication().doShellScript(cmd); }
+function sh(cmd) { const a = Application.currentApplication(); a.includeStandardAdditions = true; return a.doShellScript(cmd); }
 const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
 const clean = (s) => String(s).replace(/\|/g, "/");          // "|" is SwiftBar's separator
 const pct = (s) => (s.finished ? 1 : s.total && s.watched != null ? Math.min(1, s.watched / s.total) : 0);
