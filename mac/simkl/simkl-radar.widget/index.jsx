@@ -103,7 +103,7 @@ function Hero({ s }) {
               <div className="sr-prog-text">
                 {s.next && <em>{s.next}</em>}
                 {s.next && " up next"}
-                {l != null && <>{"  ·  "}{l} left</>}
+                {l != null && `  ·  ${l} left`}
                 {s.finished && (s.kind === "movie" ? "Watched" : "Series completed")}
                 {"  ·  "}{ago(s.last)}
               </div>
@@ -155,7 +155,7 @@ export const render = ({ output, error }) => {
   try { d = JSON.parse(output); } catch (e) { d = null; }
   if (error || !d) return <Message title="Couldn't load Simkl" body={String(error || "No data yet — it will retry in a few minutes.")} />;
   if (d.error === "not_linked")
-    return <Message title="Link your Simkl account" body={<>Run once in Terminal:<code>osascript -l JavaScript ~/.simkl-radar/simkl.js login</code></>} />;
+    return <Message title="Link your Simkl account" body={<span>Run once in Terminal:<code>osascript -l JavaScript ~/.simkl-radar/simkl.js login</code></span>} />;
   if (d.error || !d.items || !d.items.length) return <Message title="Nothing watched yet" body="Watch something and it will show up here." />;
 
   const [hero, ...rest] = d.items;
