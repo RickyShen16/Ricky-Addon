@@ -24,6 +24,41 @@ const simklUrl = (s) =>
 const watchUrl = (s) => (WATCH_APP === "nuvio" ? `nuvio://search?query=${encodeURIComponent(s.title)}` : simklUrl(s));
 const open = (url) => run(`open ${JSON.stringify(url)}`);
 
+// ---- drag to move (grab the bottom bar; double-click it to reset) ----
+const POS_KEY = "simkl-radar-pos";
+function savedPos() {
+  try { return JSON.parse(localStorage.getItem(POS_KEY)) || { x: 0, y: 0 }; } catch (e) { return { x: 0, y: 0 }; }
+}
+const moveStyle = () => { const p = savedPos(); return { transform: `translate(${p.x}px, ${p.y}px)` }; };
+function startDrag(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const card = e.currentTarget.closest(".sr");
+  const start = savedPos(), sx = e.clientX, sy = e.clientY;
+  const maxX = window.innerWidth - card.offsetWidth - POSITION.left, maxY = window.innerHeight - card.offsetHeight - POSITION.top;
+  let cur = start;
+  card.classList.add("sr-dragging");
+  const move = (ev) => {
+    cur = {
+      x: Math.min(maxX, Math.max(-POSITION.left, start.x + ev.clientX - sx)),
+      y: Math.min(maxY, Math.max(-POSITION.top, start.y + ev.clientY - sy)),
+    };
+    card.style.transform = `translate(${cur.x}px, ${cur.y}px)`;
+  };
+  const up = () => {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
+    card.classList.remove("sr-dragging");
+    try { localStorage.setItem(POS_KEY, JSON.stringify(cur)); } catch (err) {}
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+}
+function resetPos(e) {
+  try { localStorage.removeItem(POS_KEY); } catch (err) {}
+  e.currentTarget.closest(".sr").style.transform = "translate(0px, 0px)";
+}
+
 const pct = (s) => (s.finished ? 1 : s.total && s.watched != null ? Math.min(1, s.watched / s.total) : 0);
 const left = (s) => (s.kind === "movie" || s.finished || s.total == null || s.watched == null ? null : Math.max(0, s.total - s.watched));
 const typeLabel = (s) => (s.kind === "movie" ? "MOVIE" : s.kind === "anime" ? "ANIME" : "TV SERIES");
@@ -140,9 +175,9 @@ function Card({ s }) {
 
 function Message({ title, body }) {
   return (
-    <div className="sr sr-msg">
+    <div className="sr sr-msg" style={moveStyle()}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <div className="sr-kick">SIMKL RADAR</div>
+      <div className="sr-kick" onMouseDown={startDrag} onDoubleClick={resetPos} style={{ cursor: "grab" }}>SIMKL RADAR</div>
       <div className="sr-msg-title">{title}</div>
       <div className="sr-msg-body">{body}</div>
     </div>
@@ -160,7 +195,7 @@ export const render = ({ output, error }) => {
 
   const [hero, ...rest] = d.items;
   return (
-    <div className="sr">
+    <div className="sr" style={moveStyle()}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="sr-ambient" style={{ backgroundImage: hero.fanart ? `url(${fanartUrl(hero.fanart)})` : "none" }} />
       <Hero s={hero} />
@@ -168,8 +203,8 @@ export const render = ({ output, error }) => {
         <div className="sr-label">RECENTLY WATCHED</div>
         <div className="sr-row">{rest.slice(0, 4).map((s) => <Card key={s.kind + s.title} s={s} />)}</div>
       </div>
-      <div className="sr-foot">
-        <span className="sr-logo">S</span> SIMKL RADAR
+      <div className="sr-foot" onMouseDown={startDrag} onDoubleClick={resetPos} title="Drag to move · double-click to reset">
+        <span className="sr-logo">S</span> SIMKL RADAR <span className="sr-grip">⠿ drag</span>
         <span className="sr-foot-r">
           {d.stale && <span className="sr-stale">offline · </span>}Updated {clock(d.updated)}
         </span>
@@ -244,6 +279,11 @@ const CSS = `
 .sr-foot{position:relative;z-index:1;display:flex;align-items:center;gap:8px;padding:18px 40px 20px;
   font-size:10.5px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.4)}
 .sr-logo{width:18px;height:18px;border-radius:6px;display:grid;place-items:center;letter-spacing:0;font-size:11px;font-weight:900;color:#111;background:rgba(255,255,255,.75)}
+.sr-foot{cursor:grab;user-select:none;-webkit-user-select:none}
+.sr-grip{margin-left:6px;padding:2px 7px;border-radius:6px;letter-spacing:.08em;color:rgba(255,255,255,.35);background:rgba(255,255,255,.06);opacity:0;transition:opacity .2s}
+.sr-foot:hover .sr-grip{opacity:1}
+.sr-dragging{cursor:grabbing;box-shadow:0 40px 100px rgba(0,0,0,.7),inset 0 0 0 1px rgba(255,255,255,.18)}
+.sr-dragging .sr-foot{cursor:grabbing}
 .sr-foot-r{margin-left:auto;letter-spacing:.06em}
 .sr-stale{color:${ACCENT}}
 .sr-msg{padding:36px 40px;width:520px;box-sizing:border-box}
