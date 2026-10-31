@@ -114,7 +114,9 @@ function Hero({ s }) {
   ].filter(Boolean);
   return (
     <div className="sr-hero">
-      <div className="sr-hero-bg" style={{ backgroundImage: s.fanart ? `url(${fanartUrl(s.fanart)})` : "none" }} />
+      {s.fanart
+        ? <div className="sr-hero-bg" style={{ backgroundImage: `url(${fanartUrl(s.fanart)})` }} />
+        : s.poster && <div className="sr-hero-bg sr-hero-bg-poster" style={{ backgroundImage: `url(${posterUrl(s.poster)})` }} />}
       <div className="sr-hero-shade" />
       <div className="sr-hero-in">
         <div className="sr-poster" onClick={() => open(watchUrl(s))}>
@@ -161,7 +163,7 @@ function Card({ s }) {
   return (
     <div className="sr-card" onClick={() => open(watchUrl(s))}>
       <div className="sr-card-poster">{s.poster ? <img src={posterUrl(s.poster)} /> : null}</div>
-      <div className="sr-card-txt">
+      <div className={"sr-card-txt" + (s.finished ? " has-check" : "")}>
         <div className="sr-card-title">{s.title}</div>
         <div className="sr-card-sub">{sub(s)}</div>
         <div className="sr-card-bar">
@@ -197,7 +199,7 @@ export const render = ({ output, error }) => {
   return (
     <div className="sr" style={moveStyle()}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <div className="sr-ambient" style={{ backgroundImage: hero.fanart ? `url(${fanartUrl(hero.fanart)})` : "none" }} />
+      <div className="sr-ambient" style={{ backgroundImage: hero.fanart ? `url(${fanartUrl(hero.fanart)})` : hero.poster ? `url(${posterUrl(hero.poster)})` : "none" }} />
       <Hero s={hero} />
       <div className="sr-next">
         <div className="sr-label">RECENTLY WATCHED</div>
@@ -270,6 +272,8 @@ const CSS = `
 .sr-card-poster{flex:none;width:52px;height:78px;border-radius:9px;overflow:hidden;background:#2a2630;box-shadow:0 6px 16px rgba(0,0,0,.4)}
 .sr-card-poster img{width:100%;height:100%;object-fit:cover;display:block}
 .sr-card-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.sr-card-txt.has-check .sr-card-title{padding-right:22px}
+.sr-hero-bg-poster{background-position:center 25%;filter:blur(28px) saturate(150%) brightness(.75);transform:scale(1.25)}
 .sr-card-title{font-size:13.5px;font-weight:700;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .sr-card-sub{margin-top:4px;font-size:11.5px;font-weight:600;color:rgba(255,255,255,.55)}
 .sr-card-bar{margin-top:auto;height:4px;border-radius:2px;background:rgba(255,255,255,.14);overflow:hidden}
