@@ -33,7 +33,9 @@ This shows the iPhone widget as is; it is not a separate Mac build.
   `login` does Simkl's PIN sign-in; `data` prints your recent watches as JSON. The token is stored in
   `~/.simkl-radar/token` (readable only by you). The last good result is cached, so when you're offline
   the widgets keep showing it with an "offline" tag.
-- **Move the desktop widget** by dragging its bottom bar (SIMKL RADAR). It remembers the spot; double-click the bar to put it back.
+- **Move the desktop widget** from the menu bar: Simkl icon → **Move desktop widget** → Top left / Top centre / Top right / Centre / Bottom left / Bottom right.
+  Or from Terminal: `osascript -l JavaScript ~/.simkl-radar/simkl.js position top-right`.
+  Dragging the bottom bar (⠿ drag) also works if Übersicht passes the mouse through; double-click it to undo a drag.
 - The desktop widget refreshes every 10 minutes. Click **Resume**, the poster or any card to open the
   title in Nuvio; **Open in Simkl** opens the Simkl page. Change `WATCH_APP`, `ACCENT` or `POSITION` at the top of `index.jsx`.
 - The menu bar plugin shows the current title and next episode; its dropdown has progress, poster thumbnails,

@@ -79,6 +79,10 @@ function run() {
   }
   L.push("---");
   L.push((d.stale ? "Offline · " : "") + "Updated " + new Date(d.updated).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " | size=11 color=#8e8e93");
+  L.push("Move desktop widget | sfimage=rectangle.on.rectangle");
+  for (const [label, where] of [["Top left", "top-left"], ["Top centre", "top-center"], ["Top right", "top-right"],
+    ["Centre", "center"], ["Bottom left", "bottom-left"], ["Bottom right", "bottom-right"]])
+    L.push("--" + label + " | bash=/usr/bin/osascript param1=-l param2=JavaScript param3=" + core + " param4=position param5=" + where + " terminal=false");
   L.push("Refresh | refresh=true sfimage=arrow.clockwise");
   L.push("Simkl.com | href=https://simkl.com sfimage=globe");
   return L.join("\n");

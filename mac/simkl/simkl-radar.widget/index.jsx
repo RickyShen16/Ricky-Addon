@@ -7,12 +7,11 @@ import { run } from "uebersicht";
 
 // ---- settings ----
 const ACCENT = "#ff4b3e";            // live dot, next-episode tick, progress glow
-const POSITION = { top: 48, left: 48 };
 const WATCH_APP = "nuvio";           // "nuvio" | "simkl"  (what ▶ Resume opens)
 
 export const command = `osascript -l JavaScript "$HOME/.simkl-radar/simkl.js" data`;
 export const refreshFrequency = 10 * 60 * 1000;
-export const className = `top: ${POSITION.top}px; left: ${POSITION.left}px;`;
+export const className = `top: 0; left: 0;`;   // placement: menu bar → Move desktop widget
 
 // ---- helpers ----
 const posterUrl = (p) => (p ? `https://simkl.in/posters/${p}_m.jpg` : null);
@@ -29,19 +28,42 @@ const POS_KEY = "simkl-radar-pos";
 function savedPos() {
   try { return JSON.parse(localStorage.getItem(POS_KEY)) || { x: 0, y: 0 }; } catch (e) { return { x: 0, y: 0 }; }
 }
-const moveStyle = () => { const p = savedPos(); return { transform: `translate(${p.x}px, ${p.y}px)` }; };
+const M = 48, DOCK = 96;   // screen margin, extra room above the Dock
+const PRESETS = {
+  "top-left": { top: M, left: M },
+  "top-center": { top: M, left: "50%", marginLeft: -440 },
+  "top-right": { top: M, right: M },
+  "center": { top: "50%", left: "50%", marginLeft: -440, marginTop: -215 },
+  "bottom-left": { bottom: DOCK, left: M },
+  "bottom-right": { bottom: DOCK, right: M },
+};
+// a new preset from the menu bar (new stamp) wipes any old drag offset
+function syncPreset(d) {
+  try {
+    if (d && d.posStamp && localStorage.getItem("simkl-radar-stamp") !== d.posStamp) {
+      localStorage.setItem("simkl-radar-stamp", d.posStamp);
+      localStorage.removeItem(POS_KEY);
+    }
+  } catch (e) {}
+}
+const moveStyle = (d) => {
+  const p = savedPos();
+  return Object.assign({ position: "fixed" }, PRESETS[(d && d.pos) || "top-left"] || PRESETS["top-left"],
+    { transform: `translate(${p.x}px, ${p.y}px)` });
+};
 function startDrag(e) {
   if (e.button !== 0) return;
   e.preventDefault();
   const card = e.currentTarget.closest(".sr");
-  const start = savedPos(), sx = e.clientX, sy = e.clientY;
-  const maxX = window.innerWidth - card.offsetWidth - POSITION.left, maxY = window.innerHeight - card.offsetHeight - POSITION.top;
+  const start = savedPos(), sx = e.clientX, sy = e.clientY, r = card.getBoundingClientRect();
+  const minX = start.x - r.left, maxX = start.x + (window.innerWidth - r.right);
+  const minY = start.y - r.top, maxY = start.y + (window.innerHeight - r.bottom);
   let cur = start;
   card.classList.add("sr-dragging");
   const move = (ev) => {
     cur = {
-      x: Math.min(maxX, Math.max(-POSITION.left, start.x + ev.clientX - sx)),
-      y: Math.min(maxY, Math.max(-POSITION.top, start.y + ev.clientY - sy)),
+      x: Math.min(maxX, Math.max(minX, start.x + ev.clientX - sx)),
+      y: Math.min(maxY, Math.max(minY, start.y + ev.clientY - sy)),
     };
     card.style.transform = `translate(${cur.x}px, ${cur.y}px)`;
   };
@@ -175,9 +197,9 @@ function Card({ s }) {
   );
 }
 
-function Message({ title, body }) {
+function Message({ title, body, d }) {
   return (
-    <div className="sr sr-msg" style={moveStyle()}>
+    <div className="sr sr-msg" style={moveStyle(d)}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="sr-kick" onMouseDown={startDrag} onDoubleClick={resetPos} style={{ cursor: "grab" }}>SIMKL RADAR</div>
       <div className="sr-msg-title">{title}</div>
@@ -190,14 +212,15 @@ function Message({ title, body }) {
 export const render = ({ output, error }) => {
   let d;
   try { d = JSON.parse(output); } catch (e) { d = null; }
+  syncPreset(d);
   if (error || !d) return <Message title="Couldn't load Simkl" body={String(error || "No data yet — it will retry in a few minutes.")} />;
   if (d.error === "not_linked")
-    return <Message title="Link your Simkl account" body={<span>Run once in Terminal:<code>osascript -l JavaScript ~/.simkl-radar/simkl.js login</code></span>} />;
-  if (d.error || !d.items || !d.items.length) return <Message title="Nothing watched yet" body="Watch something and it will show up here." />;
+    return <Message d={d} title="Link your Simkl account" body={<span>Run once in Terminal:<code>osascript -l JavaScript ~/.simkl-radar/simkl.js login</code></span>} />;
+  if (d.error || !d.items || !d.items.length) return <Message d={d} title="Nothing watched yet" body="Watch something and it will show up here." />;
 
   const [hero, ...rest] = d.items;
   return (
-    <div className="sr" style={moveStyle()}>
+    <div className="sr" style={moveStyle(d)}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="sr-ambient" style={{ backgroundImage: hero.fanart ? `url(${fanartUrl(hero.fanart)})` : hero.poster ? `url(${posterUrl(hero.poster)})` : "none" }} />
       <Hero s={hero} />
@@ -284,7 +307,7 @@ const CSS = `
   font-size:10.5px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.4)}
 .sr-logo{width:18px;height:18px;border-radius:6px;display:grid;place-items:center;letter-spacing:0;font-size:11px;font-weight:900;color:#111;background:rgba(255,255,255,.75)}
 .sr-foot{cursor:grab;user-select:none;-webkit-user-select:none}
-.sr-grip{margin-left:6px;padding:2px 7px;border-radius:6px;letter-spacing:.08em;color:rgba(255,255,255,.35);background:rgba(255,255,255,.06);opacity:0;transition:opacity .2s}
+.sr-grip{margin-left:6px;padding:2px 7px;border-radius:6px;letter-spacing:.08em;color:rgba(255,255,255,.35);background:rgba(255,255,255,.06);opacity:.8;transition:opacity .2s}
 .sr-foot:hover .sr-grip{opacity:1}
 .sr-dragging{cursor:grabbing;box-shadow:0 40px 100px rgba(0,0,0,.7),inset 0 0 0 1px rgba(255,255,255,.18)}
 .sr-dragging .sr-foot{cursor:grabbing}

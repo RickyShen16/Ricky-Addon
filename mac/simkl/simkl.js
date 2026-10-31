@@ -6,6 +6,8 @@
 //   osascript -l JavaScript ~/.simkl-radar/simkl.js login    link your Simkl account (once)
 //   osascript -l JavaScript ~/.simkl-radar/simkl.js data     print watch data as JSON
 //   osascript -l JavaScript ~/.simkl-radar/simkl.js logout   forget the token
+//   osascript -l JavaScript ~/.simkl-radar/simkl.js position top-right   move the desktop widget
+//      (top-left, top-center, top-right, center, bottom-left, bottom-right)
 //
 // Token + last good data live in ~/.simkl-radar/ (token is chmod 600).
 // ============================================
@@ -92,9 +94,16 @@ function login(dir) {
   return "Timed out. Run login again.";
 }
 
+const POSITIONS = ["top-left", "top-center", "top-right", "center", "bottom-left", "bottom-right"];
+function readPos(dir) {
+  const raw = readText(dir + "/position").trim().split(" ");
+  return { pos: POSITIONS.indexOf(raw[0]) >= 0 ? raw[0] : "top-left", posStamp: raw[1] || "0" };
+}
+function withPos(dir, obj) { return JSON.stringify(Object.assign(obj, readPos(dir))); }
+
 function data(dir) {
   const token = readText(dir + "/token").trim();
-  if (!token) return JSON.stringify({ error: "not_linked" });
+  if (!token) return withPos(dir, { error: "not_linked" });
   try {
     const g = (path, fb) => { try { return getJSON(API + path, token); } catch (e) { return fb; } };
     const items = normalize({
@@ -108,11 +117,11 @@ function data(dir) {
     if (!items.length) throw new Error("empty");
     const json = JSON.stringify({ updated: new Date().toISOString(), items });
     writeText(dir + "/cache.json", json, false);
-    return json;
+    return withPos(dir, JSON.parse(json));
   } catch (e) {                                          // offline / API hiccup → last good data
     const cached = readText(dir + "/cache.json");
-    if (cached) { const c = JSON.parse(cached); c.stale = true; return JSON.stringify(c); }
-    return JSON.stringify({ error: "fetch_failed" });
+    if (cached) { const c = JSON.parse(cached); c.stale = true; return withPos(dir, c); }
+    return withPos(dir, { error: "fetch_failed" });
   }
 }
 
@@ -120,6 +129,13 @@ function run(argv) {
   const dir = home() + "/.simkl-radar";
   const cmd = argv[0] || "data";
   if (cmd === "login") return login(dir);
+  if (cmd === "position") {
+    const where = argv[1];
+    if (POSITIONS.indexOf(where) < 0) return "Use one of: " + POSITIONS.join(", ");
+    writeText(dir + "/position", where + " " + Date.now(), false);
+    try { sh("osascript -e 'tell application id \"tracesOf.Uebersicht\" to refresh'"); } catch (e) {}
+    return "Desktop widget → " + where;
+  }
   if (cmd === "logout") { sh("rm -f " + q(dir + "/token") + " " + q(dir + "/cache.json")); return "Logged out."; }
   return data(dir);
 }
