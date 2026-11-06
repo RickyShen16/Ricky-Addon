@@ -9,6 +9,7 @@ Home-screen and lock-screen widgets for [Scriptable](https://scriptable.app). Pa
 | `Simkl Lock (big-number variant).js` | Lock screen | Alternate layout: big percentage on the left, title/sub-line/bar on the right. |
 | `Manga Lock.js` → **Manga Lock** | Lock screen, rectangular / circular / inline | Kagurabachi from WeebCentral: big chapter number, age, unread pill + read bar (needs a public AniList list). `CIRCLE_STYLE` picks one of four minimal circles. |
 | `Manga Small.js` → **Manga Small** | Home, small | Three-series manga roster (WeebCentral + AniList unread badges). |
+| `Oya Oya.js` → **Oya Oya** | Lock screen, inline (above the clock) | Just the quote "Oya Oya" next to the date. Edit `QUOTE` to change it. |
 | `Itachi Eyes.js` → **Itachi Eyes** | Lock screen, rectangular | Transparent Sharingan eyes (PNG embedded as base64). Source image: `itachi_eyes_transparent.png`. |
 
 ## Setup notes
