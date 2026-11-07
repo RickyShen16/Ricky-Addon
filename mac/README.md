@@ -6,7 +6,7 @@ Three ways to see what you're watching on a Mac. All of them read the same Simkl
 | --- | --- | --- |
 | **Desktop** (large widget) | [Übersicht](https://tracesof.net/uebersicht/) | `simkl/simkl-radar.widget/` |
 | **Menu bar** | [SwiftBar](https://swiftbar.app) | `simkl/simkl.10m.js` |
-| **Notification Center** | Your iPhone's Simkl Radar widget, via macOS "Use iPhone widgets" | nothing to install |
+| **Desktop or Notification Center, nothing running on the Mac** | `scriptable/Simkl Big.js` on the iPhone (large), shown on the Mac via "Use iPhone widgets" | nothing to install on the Mac |
 
 ![Desktop widget](docs/simkl-desktop.png)
 

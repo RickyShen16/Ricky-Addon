@@ -5,6 +5,7 @@ Home-screen and lock-screen widgets for [Scriptable](https://scriptable.app). Pa
 | Script (name in Scriptable) | Where | What |
 | --- | --- | --- |
 | `Simkl Radar.js` → **Simkl Radar** | Home, medium | Continue-watching card from Simkl. Run it once in-app to link your account (PIN flow); the token is stored in `simkl-token.txt`, which the other Simkl script reuses. |
+| `Simkl Big.js` → **Simkl Big** | Home, large (+ Mac desktop / Notification Center via "Use iPhone widgets") | The Mac-style card: backdrop, poster, episode ticks, 2×2 recently watched. Tap = resume in Nuvio. Preview: `docs/simkl-big-preview.png`. |
 | `Simkl Lock.js` → **Simkl Lock** | Lock screen, rectangular / circular / inline | Latest watched item with an episode tick bar (one tick per episode), `E24` pill, big percentage and episodes left. Optional official title logo from TMDB. |
 | `Simkl Lock (big-number variant).js` | Lock screen | Alternate layout: big percentage on the left, title/sub-line/bar on the right. |
 | `Manga Lock.js` → **Manga Lock** | Lock screen, rectangular / circular / inline | Kagurabachi from WeebCentral: big chapter number, age, unread pill + read bar (needs a public AniList list). `CIRCLE_STYLE` picks one of four minimal circles. |
