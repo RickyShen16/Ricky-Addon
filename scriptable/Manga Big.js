@@ -1,50 +1,51 @@
 // ============================================
-// MANGA BIG — large widget (Scriptable)
-// Kagurabachi up top (cover, latest chapter, release date, the last six
-// chapters), the rest of your list below. Same style as Simkl Big.
-// Works on the iPhone home screen and on the Mac via "Use iPhone widgets".
+// MANGA BIG — large widget (Scriptable)  v2
+// Poster-style: cover art bleeding in from the right, a giant ghost chapter
+// number, manga screentone, an 8-week release rhythm, and the rest of your
+// list below. Works on the iPhone and on the Mac via "Use iPhone widgets".
 //
 // SETUP: paste into Scriptable, name it "Manga Big", add a LARGE
 // Scriptable widget, set Script = Manga Big. Tap = open Tachimanga.
-// Data: WeebCentral RSS. Unread counts appear only if your AniList list is public.
+// Data: WeebCentral series pages (their RSS feed lags a chapter or two).
+// Unread counts appear only if your AniList list is public.
 // ============================================
 
 // first entry is the big one
 const SERIES = [
   { id: "01J76XYGGM22WZP7T4TKA4ZFAF", name: "Kagurabachi", anilistId: null },
   { id: "01J76XYE3130E1W5HKTJ7VD912", name: "Sakamoto Days", anilistId: null },
-  { id: "01K4JBKB0VX8TCFSSF1MK2DTZZ", name: "JJK: Modulo", anilistId: null },
+  { id: "01JR0D52BNWR8TTEFSNCRX36AP", name: "Phantom Busters", anilistId: null },
 ];
 const ANILIST_USERNAME = "MastaDeBlasta";
-const ACCENT = "#ff4b3e";
+const ACCENT = "#ff3b30";
 const TAP_URL = "tachimanga://";
-const NEW_DAYS = 7;                  // "NEW" for chapters released within this many days
+const NEW_DAYS = 7;                  // red "NEW" for chapters released within this many days
+const DISPLAY = "Futura-CondensedExtraBold";   // poster type (built into iOS)
 
 const UA = { "User-Agent": "MangaRadarWidget/3.0" };
 
 // ---------- data ----------
-const clean = (s) => (s || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').trim();
-const chNum = (s) => { const m = (s || "").match(/(?:Chapter|Episode|Days|Ch\.?)\s*([\d.]+)/i) || (s || "").match(/([\d.]+)\s*$/); return m ? parseFloat(m[1]) : null; };
+const clean = (s) => (s || "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+const chNum = (s) => { const m = (s || "").match(/([\d.]+)\s*$/); return m ? parseFloat(m[1]) : null; };
 
-async function fetchChapters(id) {
+// series page lists the latest ~9 chapters with exact timestamps
+async function fetchSeries(id) {
   try {
-    const r = new Request("https://weebcentral.com/series/" + id + "/rss");
+    const r = new Request("https://weebcentral.com/series/" + id);
     r.headers = UA; r.timeoutInterval = 15;
-    const xml = await r.loadString();
-    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
-    return items.map((it) => {
-      const get = (tag) => { const m = it.match(new RegExp("<" + tag + ">([\\s\\S]*?)</" + tag + ">")); return m ? clean(m[1]) : ""; };
-      return { num: chNum(get("title")), date: new Date(get("pubDate")) };
-    }).filter((c) => c.num != null && !isNaN(c.date));
-  } catch (e) { return []; }
+    const html = await r.loadString();
+    const chapters = [...html.matchAll(/checkNewChapter\('([^']+)'\)[\s\S]*?<span class="">([^<]+)<\/span>/g)]
+      .map((m) => ({ num: chNum(m[2]), date: new Date(m[1]) }))
+      .filter((c) => c.num != null && !isNaN(c.date));
+    const am = html.match(/<strong>Author\(s\):<\/strong>([\s\S]*?)<\/li>/);
+    return { chapters, author: am ? clean(am[1]).replace(/\s*,\s*$/, "") : "" };
+  } catch (e) { return { chapters: [], author: "" }; }
 }
 async function loadImage(url, headers) {
   try { const r = new Request(url); if (headers) r.headers = headers; r.timeoutInterval = 15; return await r.loadImage(); } catch (e) { return null; }
 }
 const coverUrl = (id) => "https://temp.compsci88.com/cover/fallback/" + id + ".jpg";
-const blurCoverUrl = (id) => "https://wsrv.nl/?url=temp.compsci88.com/cover/fallback/" + id + ".jpg&w=400&blur=30&output=jpg";
 
-// AniList progress by series (null when the list is private or a title isn't on it)
 const norm = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 async function fetchProgress() {
   if (!ANILIST_USERNAME) return {};
@@ -68,12 +69,13 @@ async function fetchProgress() {
   } catch (e) { return {}; }
 }
 
-// ---------- drawing helpers (same as Simkl Big) ----------
-const BG = "#0e0c10";
+// ---------- drawing helpers ----------
+const BG = "#0b0a0d";
 const col = (hex, a) => new Color(hex, a == null ? 1 : a);
 const white = (a) => col("#ffffff", a);
 const track = (t) => t.split("").join(" ");
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const shortDate = (d) => MONTHS[d.getMonth()] + " " + d.getDate();
 const daysAgo = (d) => Math.floor((Date.now() - d.getTime()) / 86400000);
 function ago(d) {
@@ -83,9 +85,11 @@ function ago(d) {
   const days = Math.round(h / 24); return days < 30 ? days + "d ago" : Math.round(days / 30) + "mo ago";
 }
 const fmtCh = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-function textWidth(str, fs) {
+const display = (size) => new Font(DISPLAY, size);
+function textWidth(str, fs, condensed) {
   let w = 0;
   for (const ch of str || "") {
+    if (condensed) { w += ch === " " ? fs * 0.22 : /[IJ1il.,:]/.test(ch) ? fs * 0.3 : /[MW]/.test(ch) ? fs * 0.72 : fs * 0.5; continue; }
     if (ch === " ") w += fs * 0.28;
     else if (/[ilIjtf.,!:;'|]/.test(ch)) w += fs * 0.30;
     else if (/[mwMW]/.test(ch)) w += fs * 0.85;
@@ -94,12 +98,11 @@ function textWidth(str, fs) {
   }
   return w;
 }
-function fitLine(t, fs, maxW) {
-  if (textWidth(t, fs) <= maxW) return t;
-  while (t.length > 1 && textWidth(t + "…", fs) > maxW) t = t.slice(0, -1);
+function fitLine(t, fs, maxW, condensed) {
+  if (textWidth(t, fs, condensed) <= maxW) return t;
+  while (t.length > 1 && textWidth(t + "…", fs, condensed) > maxW) t = t.slice(0, -1);
   return t.trim() + "…";
 }
-function fitSize(t, maxW, ladder) { for (const fs of ladder) if (textWidth(t, fs) <= maxW) return fs; return ladder[ladder.length - 1]; }
 function rounded(ctx, x, y, w, h, r, c) { ctx.setFillColor(c); const p = new Path(); p.addRoundedRect(new Rect(x, y, w, h), r, r); ctx.addPath(p); ctx.fillPath(); }
 function strokeRounded(ctx, x, y, w, h, r, c, lw) { ctx.setStrokeColor(c); ctx.setLineWidth(lw); const p = new Path(); p.addRoundedRect(new Rect(x, y, w, h), r, r); ctx.addPath(p); ctx.strokePath(); }
 function dot(ctx, cx, cy, r, c) { ctx.setFillColor(c); const p = new Path(); p.addEllipse(new Rect(cx - r, cy - r, r * 2, r * 2)); ctx.addPath(p); ctx.fillPath(); }
@@ -126,22 +129,34 @@ function cover(img, w, h, r, biasY) {
   c.drawImageInRect(img, new Rect((w - dw) / 2, (h - dh) * (biasY == null ? 0.5 : biasY), dw, dh));
   return r ? roundedImage(c.getImage(), w, h, r) : c.getImage();
 }
-function shade(ctx, x, y, w, h, dir, a0, a1, hex) {
+// 1-pt strips, whole-number edges, no overlap (overlapping alpha strips show as stripes)
+function shade(ctx, x, y, w, h, dir, a0, a1, hex, ease) {
   const n = Math.round(dir === "v" ? h : w);
   for (let i = 0; i < n; i++) {
-    const t = n > 1 ? i / (n - 1) : 0;
+    let t = n > 1 ? i / (n - 1) : 0;
+    if (ease) t = t * t * (3 - 2 * t);
     ctx.setFillColor(col(hex || BG, a0 + (a1 - a0) * t));
     if (dir === "v") ctx.fillRect(new Rect(Math.round(x), Math.round(y) + i, Math.round(w), 1));
     else ctx.fillRect(new Rect(Math.round(x) + i, Math.round(y), 1, Math.round(h)));
+  }
+}
+// manga screentone: a dot grid whose dots shrink away from a corner
+function screentone(ctx, x, y, w, h, fromX, fromY, reach, maxR, c) {
+  const step = 6;
+  for (let gy = y; gy <= y + h; gy += step) {
+    for (let gx = x + ((gy - y) / step % 2 ? step / 2 : 0); gx <= x + w; gx += step) {
+      const d = Math.hypot(gx - fromX, gy - fromY) / reach;
+      const r = maxR * (1 - d);
+      if (r > 0.35) dot(ctx, gx, gy, r, c);
+    }
   }
 }
 function drawPill(ctx, label, x, y) {
   const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
   const labelW = Math.ceil(textWidth(label, PFS) * 1.08);
   const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, midY = y + PILL_H / 2;
-  rounded(ctx, x, y, pillW, PILL_H, PILL_H / 2, white(0.94));
+  rounded(ctx, x, y, pillW, PILL_H, PILL_H / 2, white(0.95));
   const ix = x + PAD_X;
-  // open book: two pages tilted up from the spine
   ctx.setFillColor(col("#111111"));
   const page = (pts) => { const p = new Path(); p.move(pts[0]); pts.slice(1).forEach((q) => p.addLine(q)); p.closeSubpath(); ctx.addPath(p); ctx.fillPath(); };
   page([new Point(ix + 3.6, midY - 3), new Point(ix - 0.5, midY - 5), new Point(ix - 0.5, midY + 3.8), new Point(ix + 3.6, midY + 5.6)]);
@@ -150,105 +165,116 @@ function drawPill(ctx, label, x, y) {
   ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));
   ctx.setTextAlignedLeft();
 }
+// which of the last 8 weeks (Mon–Sun) had a chapter; [oldest … this week]
+function rhythm(chapters) {
+  const now = new Date(), monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const weeks = [];
+  for (let i = 7; i >= 0; i--) {
+    const start = new Date(monday.getTime() - i * 7 * 86400000), end = new Date(start.getTime() + 7 * 86400000);
+    weeks.push(chapters.filter((c) => c.date >= start && c.date < end).length);
+  }
+  return weeks;
+}
 
 // ---------- LARGE 364 × 382 ----------
-const W = 364, H = 382, PAD = 16;
+const W = 364, H = 382, PAD = 18;
 
 function drawLarge(main, others, updated) {
   const ctx = newCtx(W, H);
   ctx.opaque = true;
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
-  CORNER_BG = col(BG);
+  const latest = main.chapters[0];
 
-  // backdrop: the cover, blurred
-  const HERO_H = 230;
-  if (main.backdrop) {
-    ctx.drawImageInRect(cover(main.backdrop, W, HERO_H, 0, 0.3), new Rect(0, 0, W, HERO_H));
-    ctx.setFillColor(col(BG, 0.35)); ctx.fillRect(new Rect(0, 0, W, HERO_H));
-    shade(ctx, 0, 0, W, HERO_H, "h", 0.85, 0.2, BG);
-    shade(ctx, 0, 100, W, HERO_H - 100, "v", 0, 1, BG);
+  // cover art bleeding in from the right, fading into the page
+  const CW = 236, CX = W - CW, CH = 300;
+  if (main.img) {
+    ctx.drawImageInRect(cover(main.img, CW, CH, 0, 0.15), new Rect(CX, 0, CW, CH));
+    shade(ctx, CX, 0, 150, CH, "h", 1, 0, BG, true);
+    shade(ctx, CX, 150, CW, CH - 150, "v", 0, 1, BG, true);
+    ctx.setFillColor(col(BG, 0.12)); ctx.fillRect(new Rect(CX, 0, CW, CH));
   }
 
-  // cover
-  const PX = PAD, PY = PAD, PW = 92, PH = 138;
-  rounded(ctx, PX - 1, PY - 1, PW + 2, PH + 2, 11, white(0.14));
-  if (main.img) ctx.drawImageInRect(cover(main.img, PW, PH, 10, 0.2), new Rect(PX, PY, PW, PH));
-  else rounded(ctx, PX, PY, PW, PH, 10, col("#2a2630"));
-
-  const TX = PX + PW + 14, TW = W - PAD - TX;
-  const latest = main.chapters[0];
-  const fresh = latest && daysAgo(latest.date) < NEW_DAYS;
+  // screentone + giant ghost chapter number
+  screentone(ctx, 0, 150, 220, 232, 0, H, 230, 2.1, white(0.06));
+  if (latest) {
+    ctx.setFont(display(150)); ctx.setTextColor(white(0.07));
+    ctx.drawText(fmtCh(latest.num), new Point(PAD - 6, 48));
+  }
 
   // kicker
-  let kick = "LATEST CHAPTER", hot = fresh;
+  const fresh = latest && daysAgo(latest.date) < NEW_DAYS;
+  let kick = fresh ? "NEW CHAPTER" : "LATEST", hot = fresh;
   if (main.unread != null) { kick = main.unread > 0 ? fmtCh(main.unread) + " UNREAD" : "CAUGHT UP"; hot = main.unread > 0; }
-  else if (fresh) kick = "NEW CHAPTER";
-  let kx = TX;
-  if (hot) { dot(ctx, TX + 3.5, PY + 7, 3.5, col(ACCENT)); kx = TX + 12; }
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.62)); ctx.setTextAlignedLeft();
-  ctx.drawText(track(kick), new Point(kx, PY + 1.5));
+  let kx = PAD;
+  if (hot) { dot(ctx, PAD + 3.5, PAD + 5.5, 3.5, col(ACCENT)); kx = PAD + 12; }
+  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(hot ? 0.85 : 0.6));
+  ctx.drawText(track(kick), new Point(kx, PAD));
 
-  // title
-  const tfs = fitSize(main.name, TW, [26, 23, 20, 17]);
-  ctx.setFont(Font.heavySystemFont(tfs)); ctx.setTextColor(white(1));
-  ctx.drawText(fitLine(main.name, tfs, TW), new Point(TX, PY + 18));
-
-  // big chapter number
-  if (latest) {
-    const ny = PY + 18 + tfs * 1.08 + 6;
-    ctx.setFont(Font.boldSystemFont(10)); ctx.setTextColor(white(0.55));
-    ctx.drawText(track("CH"), new Point(TX, ny + 9));
-    ctx.setFont(Font.heavySystemFont(30)); ctx.setTextColor(white(1));
-    ctx.drawText(fmtCh(latest.num), new Point(TX + 22, ny - 2));
-    ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.6));
-    ctx.drawText(fitLine(shortDate(latest.date) + "  ·  " + ago(latest.date), 10.5, TW), new Point(TX, ny + 34));
+  // title in poster type
+  const TW = 190, title = main.name.toUpperCase();
+  let tfs = 34; while (tfs > 20 && textWidth(title, tfs, true) > TW) tfs -= 1;
+  ctx.setFont(display(tfs)); ctx.setTextColor(white(1));
+  ctx.drawText(fitLine(title, tfs, TW, true), new Point(PAD, PAD + 13));
+  let y = PAD + 13 + tfs * 1.12;
+  if (main.author) {
+    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.5));
+    ctx.drawText(fitLine(main.author, 9.5, TW), new Point(PAD, y));
   }
 
-  drawPill(ctx, "Read", TX, PY + PH - 28);
+  // chapter number, big
+  if (latest) {
+    const ny = PAD + 72;
+    ctx.setFont(Font.heavySystemFont(9)); ctx.setTextColor(col(ACCENT));
+    ctx.drawText(track("CHAPTER"), new Point(PAD, ny));
+    ctx.setFont(display(62)); ctx.setTextColor(white(1));
+    ctx.drawText(fmtCh(latest.num), new Point(PAD - 2, ny + 8));
+    ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.65));
+    ctx.drawText(DAYS[latest.date.getDay()] + ", " + shortDate(latest.date) + "  ·  " + ago(latest.date), new Point(PAD, ny + 84));
+  }
 
-  // last six chapters
-  const CY = PY + PH + 16;
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.5));
-  ctx.drawText(track("RECENT CHAPTERS"), new Point(PAD, CY));
-  ctx.setTextAlignedRight(); ctx.drawTextInRect(updated, new Rect(W - PAD - 120, CY, 120, 12)); ctx.setTextAlignedLeft();
-  const chips = main.chapters.slice(0, 6), CG = 6, CHW = (W - PAD * 2 - CG * 5) / 6, CHH = 36, chipY = CY + 15;
-  chips.forEach((c, i) => {
-    const x = PAD + i * (CHW + CG), newest = i === 0;
-    const unread = main.read != null && c.num > main.read;
-    if (newest) rounded(ctx, x, chipY, CHW, CHH, 9, white(0.94));
-    else rounded(ctx, x, chipY, CHW, CHH, 9, white(0.07));
-    if (unread) strokeRounded(ctx, x + 0.75, chipY + 0.75, CHW - 1.5, CHH - 1.5, 8.5, col(ACCENT), 1.5);
-    ctx.setTextAlignedCenter();
-    ctx.setFont(Font.heavySystemFont(13)); ctx.setTextColor(newest ? col("#111111") : white(0.95));
-    ctx.drawTextInRect(fmtCh(c.num), new Rect(x, chipY + 5, CHW, 16));
-    ctx.setFont(Font.semiboldSystemFont(8.5)); ctx.setTextColor(newest ? col("#111111", 0.6) : white(0.5));
-    ctx.drawTextInRect(shortDate(c.date), new Rect(x, chipY + 21, CHW, 11));
-    ctx.setTextAlignedLeft();
+  // 8-week release rhythm
+  const RY = PAD + 182, weeks = rhythm(main.chapters), SQ = 11, SG = 4;
+  ctx.setFont(Font.boldSystemFont(7.5)); ctx.setTextColor(white(0.42));
+  ctx.drawText(track("LAST 8 WEEKS"), new Point(PAD, RY));
+  weeks.forEach((n, i) => {
+    const x = PAD + i * (SQ + SG), yy = RY + 13, last = i === weeks.length - 1;
+    if (n > 0) rounded(ctx, x, yy, SQ, SQ, 2.5, last ? col(ACCENT) : white(0.9));
+    else strokeRounded(ctx, x + 0.5, yy + 0.5, SQ - 1, SQ - 1, 2.2, white(last ? 0.5 : 0.22), 1);
   });
 
+  drawPill(ctx, "Read", W - PAD - 82, RY + 2);
+
   // the rest of the list
-  const LY = chipY + CHH + 14;
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.5));
+  const LY = RY + 40;
+  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.45));
   ctx.drawText(track("ALSO READING"), new Point(PAD, LY));
-  const RG = 8, RY0 = LY + 15, RH = (H - PAD - RY0 - RG) / 2;
+  ctx.setTextAlignedRight(); ctx.drawTextInRect(updated, new Rect(W - PAD - 120, LY, 120, 12)); ctx.setTextAlignedLeft();
+  const RG = 8, RY0 = LY + 16, RH = (H - PAD - RY0 - RG) / 2;
   others.slice(0, 2).forEach((s, i) => {
-    const x = PAD, y = RY0 + i * (RH + RG), w = W - PAD * 2;
-    rounded(ctx, x, y, w, RH, 12, white(0.065));
-    strokeRounded(ctx, x + 0.5, y + 0.5, w - 1, RH - 1, 11.5, white(0.08), 1);
-    const th = RH - 12, tw = Math.round(th * 2 / 3);
-    if (s.img) { CORNER_BG = col("#1a181c"); ctx.drawImageInRect(cover(s.img, tw, th, 5, 0.2), new Rect(x + 6, y + 6, tw, th)); }
-    else rounded(ctx, x + 6, y + 6, tw, th, 5, col("#2a2630"));
-    const c = s.chapters[0], tx = x + 6 + tw + 10;
+    const x = PAD, yy = RY0 + i * (RH + RG), w = W - PAD * 2;
+    rounded(ctx, x, yy, w, RH, 12, white(0.07));
+    strokeRounded(ctx, x + 0.5, yy + 0.5, w - 1, RH - 1, 11.5, white(0.07), 1);
+    const th = RH - 10, tw = Math.round(th * 2 / 3);
+    if (s.img) { CORNER_BG = col("#1c1a1e"); ctx.drawImageInRect(cover(s.img, tw, th, 5, 0.15), new Rect(x + 5, yy + 5, tw, th)); }
+    else rounded(ctx, x + 5, yy + 5, tw, th, 5, col("#2a2630"));
+    const c = s.chapters[0], tx = x + 5 + tw + 10;
     const isNew = c && daysAgo(c.date) < NEW_DAYS;
     const badge = s.unread != null ? (s.unread > 0 ? fmtCh(s.unread) + " NEW" : "✓") : isNew ? "NEW" : "";
-    const bw = badge ? Math.max(24, textWidth(badge, 8.5) + 14) : 0;
-    ctx.setFont(Font.boldSystemFont(12.5)); ctx.setTextColor(white(1));
-    ctx.drawText(fitLine(s.name, 12.5, x + w - tx - bw - 16), new Point(tx, y + RH / 2 - 15));
-    ctx.setFont(Font.semiboldSystemFont(10)); ctx.setTextColor(white(0.55));
-    ctx.drawText(c ? "Ch " + fmtCh(c.num) + "  ·  " + ago(c.date) : "No chapters found", new Point(tx, y + RH / 2 + 2));
+    const bw = badge ? Math.max(26, textWidth(badge, 8.5) + 14) : 0;
+    ctx.setFont(display(15)); ctx.setTextColor(white(1));
+    ctx.drawText(fitLine(s.name.toUpperCase(), 15, x + w - tx - bw - 50, true), new Point(tx, yy + RH / 2 - 15));
+    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.55));
+    ctx.drawText(c ? ago(c.date) : "No chapters found", new Point(tx, yy + RH / 2 + 3));
+    // chapter number on the right, poster type
+    if (c) {
+      ctx.setTextAlignedRight(); ctx.setFont(display(20)); ctx.setTextColor(white(0.95));
+      ctx.drawTextInRect(fmtCh(c.num), new Rect(x + w - 12 - bw - (bw ? 8 : 0) - 60, yy + RH / 2 - 13, 60, 26));
+      ctx.setFont(Font.boldSystemFont(7)); ctx.setTextColor(white(0.4));
+      ctx.drawTextInRect(track("CH"), new Rect(x + w - 12 - bw - (bw ? 8 : 0) - 120, yy + RH / 2 - 3.5, 120 - textWidth(fmtCh(c.num), 20, true) - 4, 10));
+      ctx.setTextAlignedLeft();
+    }
     if (badge) {
-      const bx = x + w - 10 - bw, by = y + RH / 2 - 9;
-      const lit = badge !== "✓";
+      const bx = x + w - 10 - bw, by = yy + RH / 2 - 9, lit = badge !== "✓";
       if (lit) rounded(ctx, bx, by, bw, 18, 9, col(ACCENT)); else strokeRounded(ctx, bx + 0.5, by + 0.5, bw - 1, 17, 8.5, white(0.4), 1);
       ctx.setTextAlignedCenter(); ctx.setFont(Font.heavySystemFont(8.5)); ctx.setTextColor(white(lit ? 1 : 0.7));
       ctx.drawTextInRect(track(badge), new Rect(bx, by + 4, bw, 11)); ctx.setTextAlignedLeft();
@@ -258,18 +284,18 @@ function drawLarge(main, others, updated) {
 }
 
 // ---------- main ----------
-const [chapterLists, progress] = await Promise.all([Promise.all(SERIES.map((s) => fetchChapters(s.id))), fetchProgress()]);
+const [pages, progress] = await Promise.all([Promise.all(SERIES.map((s) => fetchSeries(s.id))), fetchProgress()]);
 const list = SERIES.map((s, i) => {
-  const chapters = chapterLists[i];
+  const { chapters, author } = pages[i];
   const read = typeof progress[s.id] === "number" ? progress[s.id] : null;
   const unread = read != null && chapters[0] ? Math.max(0, Math.round((chapters[0].num - Math.min(read, chapters[0].num)) * 10) / 10) : null;
-  return Object.assign({}, s, { chapters, read, unread });
+  return Object.assign({}, s, { chapters, author, read, unread });
 });
 const main = list[0];
 const others = list.slice(1).sort((a, b) => (b.chapters[0] ? b.chapters[0].date : 0) - (a.chapters[0] ? a.chapters[0].date : 0));
-const imgs = await Promise.all([loadImage(coverUrl(main.id), UA), loadImage(blurCoverUrl(main.id)), ...others.slice(0, 2).map((s) => loadImage(coverUrl(s.id), UA))]);
-main.img = imgs[0]; main.backdrop = imgs[1];
-others.slice(0, 2).forEach((s, i) => { s.img = imgs[2 + i]; });
+const imgs = await Promise.all([loadImage(coverUrl(main.id), UA), ...others.slice(0, 2).map((s) => loadImage(coverUrl(s.id), UA))]);
+main.img = imgs[0];
+others.slice(0, 2).forEach((s, i) => { s.img = imgs[1 + i]; });
 
 const widget = new ListWidget();
 widget.setPadding(0, 0, 0, 0);

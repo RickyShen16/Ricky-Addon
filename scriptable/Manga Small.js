@@ -39,9 +39,9 @@ const SERIES = [
     anilistId: null,
   },
   {
-    url: "https://weebcentral.com/series/01K4JBKB0VX8TCFSSF1MK2DTZZ/jujutsu-kaisen-modulo",
-    shortName: "JJK: Modulo",
-    anilistId: null, // spinoff title — if auto-match misses, set this manually
+    url: "https://weebcentral.com/series/01JR0D52BNWR8TTEFSNCRX36AP/phantom-busters",
+    shortName: "Phantom Busters",
+    anilistId: null,
   },
 ];
 
@@ -148,20 +148,13 @@ function matchAniListVerbose(s, entries) {
 async function fetchSeries(s) {
   let chapters = [];
   try {
-    const req = new Request("https://weebcentral.com/series/" + s.id + "/rss");
+    // series page, not RSS: the feed lags a chapter or two behind the site
+    const req = new Request("https://weebcentral.com/series/" + s.id);
     req.headers = UA;
     req.timeoutInterval = 15;
-    const xml = await req.loadString();
-    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
-    chapters = items.slice(0, 2).map((it) => {
-      const get = (tag) => {
-        const m = it.match(new RegExp("<" + tag + ">([\\s\\S]*?)</" + tag + ">"));
-        return m ? clean(m[1]) : "";
-      };
-      const title = get("title");
-      const chM = title.match(/((Chapter|Episode|Days|Ch\.?)\s*[\d.]+.*)$/i);
-      return { chapter: chM ? chM[1] : title, date: new Date(get("pubDate")) };
-    });
+    const html = await req.loadString();
+    chapters = [...html.matchAll(/checkNewChapter\('([^']+)'\)[\s\S]*?<span class="">([^<]+)<\/span>/g)]
+      .slice(0, 2).map((m) => ({ chapter: m[2].trim(), date: new Date(m[1]) }));
   } catch (e) {}
 
   let coverImg = null;

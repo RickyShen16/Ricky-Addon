@@ -37,18 +37,16 @@ function timeAgo(date) {
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 const dateLabel = (dt) => (dt && !isNaN(dt)) ? MONTHS[dt.getMonth()] + " " + dt.getDate() : "";
 
-function parseLatest(xml) {
-  const first = (xml.match(/<item>([\s\S]*?)<\/item>/) || [])[1];
-  if (!first) return null;
-  const get = (tag) => { const m = first.match(new RegExp("<" + tag + ">([\\s\\S]*?)</" + tag + ">")); return m ? clean(m[1]) : ""; };
-  const title = get("title");
-  const m = title.match(/((Chapter|Episode|Days|Ch\.?)\s*[\d.]+.*)$/i);
-  return { num: chNum(m ? m[1] : title), date: new Date(get("pubDate")) };
+// the series page lists the latest chapters with exact timestamps (the RSS feed lags a chapter or two)
+function parseLatest(html) {
+  const m = html.match(/checkNewChapter\('([^']+)'\)[\s\S]*?<span class="">([^<]+)<\/span>/);
+  if (!m) return null;
+  return { num: chNum(m[2]), date: new Date(m[1]) };
 }
 
 async function fetchLatest() {
   try {
-    const r = new Request("https://weebcentral.com/series/" + SERIES.id + "/rss");
+    const r = new Request("https://weebcentral.com/series/" + SERIES.id);
     r.headers = UA; r.timeoutInterval = 15;
     return parseLatest(await r.loadString());
   } catch (e) { return null; }
