@@ -6,6 +6,7 @@
 // "Use iPhone widgets"), with nothing running on the Mac.
 //
 // SETUP: needs "Simkl Radar" linked once (it reads the same token).
+// On a Mac: run "Simkl Big" once on the iPhone first; it copies the login to iCloud for the Mac.
 // Paste into Scriptable, name it "Simkl Big", add a LARGE Scriptable
 // (or EXTRA LARGE, on Mac/iPad) widget, set Script = Simkl Big.
 // It draws the matching layout for each size. Tap = resume in Nuvio.
@@ -16,9 +17,29 @@ const ACCENT = "#ff4b3e";            // live dot + next-episode tick
 const WATCH_APP = "nuvio";           // "nuvio" | "simkl"  (what a tap opens)
 
 const API = "https://api.simkl.com";
-const fm = FileManager.local();
-const tokenPath = fm.joinPath(fm.documentsDirectory(), "simkl-token.txt");
-const token = fm.fileExists(tokenPath) ? fm.readString(tokenPath).trim() : null;
+// The Simkl login lives in Scriptable's local folder on the phone ("Simkl Radar" saves it there).
+// A Mac running Scriptable can't see that folder, so the phone also copies it to Scriptable's
+// iCloud folder, and the Mac reads it from there.
+const TOKEN_FILE = "simkl-token.txt";
+async function findToken() {
+  let icloud = null, ip = null;
+  try { icloud = FileManager.iCloud(); ip = icloud.joinPath(icloud.documentsDirectory(), TOKEN_FILE); } catch (e) { icloud = null; }
+  const local = FileManager.local(), lp = local.joinPath(local.documentsDirectory(), TOKEN_FILE);
+  if (local.fileExists(lp)) {
+    const t = local.readString(lp).trim();
+    if (t) {
+      if (icloud) { try { if (!icloud.fileExists(ip) || icloud.readString(ip).trim() !== t) icloud.writeString(ip, t); } catch (e) {} }
+      return t;
+    }
+  }
+  if (icloud) {
+    try {
+      if (icloud.fileExists(ip)) { await icloud.downloadFileFromiCloud(ip); const t = icloud.readString(ip).trim(); if (t) return t; }
+    } catch (e) {}
+  }
+  return null;
+}
+const token = await findToken();
 
 // ---------- data ----------
 async function getJSON(path, auth) {
@@ -507,7 +528,9 @@ const PREVIEW = "large";   // in-app preview: "large" or "extraLarge"
 const WIDE = (config.runsInWidget ? config.widgetFamily : PREVIEW) === "extraLarge";
 let widget;
 if (!token) {
-  widget = message("Link Simkl first", "Run the \"Simkl Radar\" script once in Scriptable to connect your account.");
+  widget = message("Link Simkl first", Device.isPhone()
+    ? "Run the \"Simkl Radar\" script once in Scriptable to connect your account."
+    : "Open Scriptable on your iPhone and run \"Simkl Big\" once. That shares your Simkl login with this Mac through iCloud.");
   widget.url = "scriptable:///run/" + encodeURIComponent("Simkl Radar");
 } else {
   try {
