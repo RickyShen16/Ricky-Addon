@@ -220,9 +220,11 @@ function drawBackdrop(ctx, hero, w, heroH, fadeFrom) {
 }
 
 function drawPoster(ctx, img, x, y, w, h) {
-  rounded(ctx, x - 1, y - 1, w + 2, h + 2, 11, white(0.14));
-  if (img) { CORNER_BG = col(BG); ctx.drawImageInRect(cover(img, w, h, 10, 0.3), new Rect(x, y, w, h)); }
-  else rounded(ctx, x, y, w, h, 10, col("#2a2630"));
+  // hard edges: Scriptable can't clip, and faked rounded corners show as dark wedges over the backdrop
+  ctx.setFillColor(col("#000000", 0.35)); ctx.fillRect(new Rect(x + 3, y + 5, w, h));
+  if (img) ctx.drawImageInRect(cover(img, w, h, 0, 0.3), new Rect(x, y, w, h));
+  else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(x, y, w, h)); }
+  ctx.setStrokeColor(white(0.22)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(x + 0.5, y + 0.5, w - 1, h - 1));
 }
 
 function drawKicker(ctx, hero, x, y) {
@@ -350,7 +352,7 @@ function drawLarge(hero, rows, updated) {
   return ctx.getImage();
 }
 
-// ---------- EXTRA LARGE ~730 × 358 (wide; Mac desktop / iPad) — poster style ----------
+// ---------- EXTRA LARGE ~730 × 358 (wide; Mac desktop / iPad) — film strip ----------
 const XW = 730, XH = 358, XPAD = 28;
 const DISPLAY = "Futura-CondensedExtraBold";        // poster type (built into iOS)
 const display = (size) => new Font(DISPLAY, size);
@@ -400,107 +402,104 @@ function drawXL(hero, rows, updated) {
   const ctx = newCtx(XW, XH);
   ctx.opaque = true;
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, XW, XH));
+  const STRIP_Y = 212;
 
-  // full-bleed backdrop, dark on the left and along the bottom
+  // the backdrop is the hero: full bleed, drawn straight in (the canvas edge crops it)
   if (hero.backdrop) {
-    // full-bleed, drawn straight in: the canvas edge crops it, so no second full-size copy (memory)
-    const b = hero.backdrop, sc = Math.max(XW / b.size.width, XH / b.size.height), dw = b.size.width * sc, dh = b.size.height * sc;
-    ctx.drawImageInRect(b, new Rect((XW - dw) / 2, (XH - dh) * (hero.fanartReal ? 0.6 : 0.35), dw, dh));
-    ctx.setFillColor(col(BG, 0.32)); ctx.fillRect(new Rect(0, 0, XW, XH));
-    eased(ctx, 0, 0, 600, XH, "h", 0.97, 0);
-    eased(ctx, 0, 150, XW, XH - 150, "v", 0, 0.97);
+    const b = hero.backdrop, sc = Math.max(XW / b.size.width, STRIP_Y / b.size.height), dw = b.size.width * sc, dh = b.size.height * sc;
+    ctx.drawImageInRect(b, new Rect((XW - dw) / 2, (STRIP_Y - dh) * (hero.fanartReal ? 0.55 : 0.35), dw, dh));
+    ctx.setFillColor(col(BG, 0.28)); ctx.fillRect(new Rect(0, 0, XW, STRIP_Y));
+    eased(ctx, 0, 0, 520, STRIP_Y, "h", 0.95, 0);
+    eased(ctx, 0, 120, XW, STRIP_Y - 120, "v", 0, 0.75);
   }
-  screentone(ctx, 0, 170, 300, 188, 0, XH, 300, 2.2, white(0.05));
+  screentone(ctx, 420, 0, 310, 120, XW, 0, 260, 2.2, white(0.07));
 
-  // poster on the right with a red glow
-  const PW = 128, PH = 192, PX = XW - XPAD - PW, PY = 26;
-  for (let i = 14; i >= 1; i--) rounded(ctx, PX - i * 1.6, PY - i * 1.6, PW + i * 3.2, PH + i * 3.2, 12 + i * 1.6, col(ACCENT, 0.022));
-  rounded(ctx, PX - 1, PY - 1, PW + 2, PH + 2, 12, white(0.18));
-  if (hero.img) { CORNER_BG = col(BG); ctx.drawImageInRect(cover(hero.img, PW, PH, 11, 0.3), new Rect(PX, PY, PW, PH)); }
-  else rounded(ctx, PX, PY, PW, PH, 11, col("#2a2630"));
-
-  // giant ghost number behind the text: % watched, or the year for a finished movie
-  const ghost = hero.finished ? String(hero.year || "") : String(Math.round(pct(hero) * 100));
-  ctx.setFont(display(230)); ctx.setTextColor(white(0.05));
-  ctx.drawText(ghost, new Point(XPAD - 10, -36));
-
-  const TX = XPAD, TW = PX - 40 - TX;
+  const TX = XPAD, TW = 470;
   // kicker
   const typ = hero.kind === "movie" ? "MOVIE" : hero.kind === "anime" ? "ANIME" : "TV SERIES";
   const kick = (hero.finished ? (hero.kind === "movie" ? "JUST WATCHED" : "JUST FINISHED") : "NOW WATCHING") + "   ·   " + typ;
   let kx = TX;
-  if (!hero.finished) { dot(ctx, TX + 3.5, 30, 3.5, col(ACCENT)); kx = TX + 12; }
-  ctx.setFont(Font.boldSystemFont(9)); ctx.setTextColor(white(0.72)); ctx.setTextAlignedLeft();
-  ctx.drawText(track(kick), new Point(kx, 24.5));
+  if (!hero.finished) { dot(ctx, TX + 3.5, 28, 3.5, col(ACCENT)); kx = TX + 12; }
+  ctx.setFont(Font.boldSystemFont(9)); ctx.setTextColor(white(0.75)); ctx.setTextAlignedLeft();
+  ctx.drawText(track(kick), new Point(kx, 22.5));
 
   // title in poster type
-  const lay = condLayout(hero.title.toUpperCase(), TW, [62, 56, 50, 44, 38, 34]);
-  let y = 40;
+  const lay = condLayout(hero.title.toUpperCase(), TW, [58, 52, 46, 40, 34]);
+  let y = 36;
   ctx.setFont(display(lay.fs)); ctx.setTextColor(white(1));
-  for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX - 1, y)); y += lay.fs * 1.02; }
+  for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX - 1, y)); y += lay.fs * 1.0; }
   const meta = [hero.year, hero.kind === "movie" ? (hero.runtime ? hero.runtime + " min" : null) : hero.total ? hero.total + " episodes" : null,
     hero.kind !== "movie" && hero.runtime ? hero.runtime + " min each" : null].filter(Boolean).join("   ·   ");
-  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.6));
-  ctx.drawText(fitLine(meta, 11, TW - 90), new Point(TX, y + 4));
+  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.65));
+  ctx.drawText(fitLine(meta, 11, TW), new Point(TX, y + 3));
 
-  // progress: numbered episode ticks (or a bar), caption, and the % in poster type
-  const PRY = Math.max(128, y + 24), n = hero.total, p = pct(hero);
-  if (!hero.finished) {
-    ctx.setTextAlignedRight(); ctx.setFont(display(30)); ctx.setTextColor(white(1));
-    ctx.drawTextInRect(Math.round(p * 100) + "%", new Rect(TX + TW - 120, PRY - 36, 120, 34)); ctx.setTextAlignedLeft();
-  }
-  if (hero.kind !== "movie" && n && n <= 30) {
+  // progress: numbered ticks for shows, a line for movies
+  const PRY = Math.max(118, y + 22), n = hero.total, p = pct(hero);
+  const hasTicks = hero.kind !== "movie" && n && n <= 30, hasNums = hasTicks && n <= 24;
+  if (hasTicks) {
     const lit = hero.finished ? n : Math.min(n, hero.watched || 0), gap = n > 20 ? 2.5 : 4, tw = (TW - gap * (n - 1)) / n;
     for (let i = 0; i < n; i++) {
       const x = TX + i * (tw + gap);
-      if (i === lit && !hero.finished) strokeRounded(ctx, x + 0.75, PRY + 0.75, tw - 1.5, 10.5, 2.5, col(ACCENT), 1.5);
-      else rounded(ctx, x, PRY, tw, 12, 2.8, white(i < lit ? 1 : 0.14));
-      if (n <= 24) {
+      if (i === lit && !hero.finished) strokeRounded(ctx, x + 0.75, PRY + 0.75, tw - 1.5, 9.5, 2.5, col(ACCENT), 1.5);
+      else rounded(ctx, x, PRY, tw, 11, 2.8, white(i < lit ? 1 : 0.16));
+      if (hasNums) {
         ctx.setTextAlignedCenter(); ctx.setFont(Font.boldSystemFont(7.5));
         ctx.setTextColor(i === lit && !hero.finished ? col(ACCENT) : white(i < lit ? 0.6 : 0.3));
-        ctx.drawTextInRect(String(i + 1), new Rect(x, PRY + 16, tw, 10)); ctx.setTextAlignedLeft();
+        ctx.drawTextInRect(String(i + 1), new Rect(x, PRY + 15, tw, 10)); ctx.setTextAlignedLeft();
       }
     }
   } else {
-    rounded(ctx, TX, PRY + 2, TW, 8, 4, white(0.14));
-    if (p > 0) rounded(ctx, TX, PRY + 2, Math.max(8, TW * p), 8, 4, white(1));
+    rounded(ctx, TX, PRY + 2, TW, 6, 3, white(0.16));
+    if (p > 0) rounded(ctx, TX, PRY + 2, Math.max(6, TW * p), 6, 3, white(1));
   }
   const cap = [hero.finished ? (hero.kind === "movie" ? "Watched" : "Series completed") : sub(hero), ago(hero.last)].filter(Boolean).join("   ·   ");
-  const hasNums = hero.kind !== "movie" && n && n <= 24;
-  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.7));
-  ctx.drawText(fitLine(cap, 11, TW), new Point(TX, PRY + (hasNums ? 31 : 20)));
+  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.75));
+  ctx.drawText(fitLine(cap, 11, TW), new Point(TX, PRY + (hasNums ? 29 : 16)));
 
   // buttons
-  const BY = PY + PH - 28;
+  const BY = STRIP_Y - 40;
   const pw = drawPill(ctx, hero, TX, BY);
   outlinePill(ctx, "Open in Simkl", TX + pw + 10, BY);
 
-  // recently watched strip
-  const LY = PY + PH + 22;
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.5));
-  ctx.drawText(track("RECENTLY WATCHED"), new Point(XPAD, LY));
-  ctx.setTextAlignedRight(); ctx.drawTextInRect(updated, new Rect(XW - XPAD - 120, LY, 120, 12)); ctx.setTextAlignedLeft();
-  const GY = LY + 16, GAP = 10, CW = (XW - XPAD * 2 - GAP * 3) / 4, CH = XH - 18 - GY;
+  // giant number on the right: % watched, or ✓ for something finished
+  const big = hero.finished ? "✓" : Math.round(p * 100) + "%";
+  ctx.setTextAlignedRight(); ctx.setFont(display(96)); ctx.setTextColor(white(1));
+  ctx.drawTextInRect(big, new Rect(XW - XPAD - 240, 18, 240, 110));
+  ctx.setFont(Font.heavySystemFont(9)); ctx.setTextColor(col(ACCENT));
+  ctx.drawTextInRect(track(hero.finished ? (hero.kind === "movie" ? "WATCHED" : "COMPLETE") : "WATCHED SO FAR"), new Rect(XW - XPAD - 240, 128, 240, 12));
+  ctx.setTextAlignedLeft();
+
+  // ---- film strip: the recently watched, as frames on a reel ----
+  ctx.setFillColor(col("#050506")); ctx.fillRect(new Rect(0, STRIP_Y, XW, XH - STRIP_Y));
+  const HOLE_W = 9, HOLE_H = 6, HOLE_GAP = 9;
+  for (const hy of [STRIP_Y + 7, XH - 13]) for (let hx = 6; hx < XW - 6; hx += HOLE_W + HOLE_GAP) rounded(ctx, hx, hy, HOLE_W, HOLE_H, 1.5, white(0.13));
+  // edge markings, like printed film stock
+  ctx.setFont(Font.boldSystemFont(6.5)); ctx.setTextColor(col(ACCENT, 0.85));
+  ctx.drawText(track("RECENTLY WATCHED"), new Point(XPAD, STRIP_Y + 18));
+  ctx.setTextAlignedRight(); ctx.setTextColor(white(0.35));
+  ctx.drawTextInRect(track("SIMKL  ·  " + updated), new Rect(XW - XPAD - 200, STRIP_Y + 18, 200, 9)); ctx.setTextAlignedLeft();
+
+  const FY = STRIP_Y + 32, FH = XH - 22 - FY, UNIT = (XW - XPAD * 2) / 4;
   rows.slice(0, 4).forEach((s, i) => {
-    const cx = XPAD + i * (CW + GAP), cy = GY;
-    rounded(ctx, cx, cy, CW, CH, 12, white(0.075));
-    strokeRounded(ctx, cx + 0.5, cy + 0.5, CW - 1, CH - 1, 11.5, white(0.08), 1);
-    const th = CH - 12, tw = Math.round(th * 2 / 3);
-    if (s.img) { CORNER_BG = col("#1d1b1f"); ctx.drawImageInRect(cover(s.img, tw, th, 5, 0.3), new Rect(cx + 6, cy + 6, tw, th)); }
-    else rounded(ctx, cx + 6, cy + 6, tw, th, 5, col("#2a2630"));
-    const x2 = cx + 6 + tw + 9, w2 = cx + CW - 9 - x2;
-    const ct = s.title.toUpperCase(), cw = w2 - (s.finished ? 16 : 0);
-    let cfs = 15; while (cfs > 12 && condW(ct, cfs) > cw) cfs -= 0.5;          // shrink a little before cutting
+    const ux = XPAD + i * UNIT, fw = Math.round(FH * 2 / 3);
+    if (s.img) ctx.drawImageInRect(cover(s.img, fw, FH, 0, 0.3), new Rect(ux, FY, fw, FH));
+    else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(ux, FY, fw, FH)); }
+    ctx.setStrokeColor(white(0.18)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(ux + 0.5, FY + 0.5, fw - 1, FH - 1));
+    const x2 = ux + fw + 10, w2 = UNIT - fw - 22;
+    // frame number, film style
+    ctx.setFont(Font.heavySystemFont(7.5)); ctx.setTextColor(white(0.35));
+    ctx.drawText(track(String(i + 1).padStart(2, "0") + (s.finished ? "  ✓" : "")), new Point(x2, FY + 1));
+    const ct = s.title.toUpperCase();
+    let cfs = 16; while (cfs > 12 && condW(ct, cfs) > w2) cfs -= 0.5;
     ctx.setFont(display(cfs)); ctx.setTextColor(white(1));
-    ctx.drawText(fitCond(ct, cfs, cw), new Point(x2, cy + 7 + (15 - cfs) / 2));
+    ctx.drawText(fitCond(ct, cfs, w2), new Point(x2, FY + 13));
     const line1 = s.kind === "movie" ? (s.finished ? "Watched" : Math.round(pct(s) * 100) + "% watched") : sub(s);
-    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.68));
-    ctx.drawText(fitLine(line1, 9.5, w2), new Point(x2, cy + 27));
-    ctx.setTextColor(white(0.4));
-    ctx.drawText(fitLine(ago(s.last), 9.5, w2), new Point(x2, cy + 40));
-    rounded(ctx, x2, cy + CH - 12, w2, 3, 1.5, white(0.14));
-    rounded(ctx, x2, cy + CH - 12, Math.max(3, w2 * pct(s)), 3, 1.5, white(s.finished ? 0.45 : 1));
-    if (s.finished) drawCheck(ctx, cx + CW - 13, cy + 13);
+    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.7));
+    ctx.drawText(fitLine(line1, 9.5, w2), new Point(x2, FY + 35));
+    ctx.setTextColor(white(0.42));
+    ctx.drawText(fitLine(ago(s.last), 9.5, w2), new Point(x2, FY + 48));
+    rounded(ctx, x2, FY + FH - 4, w2, 3, 1.5, white(0.14));
+    rounded(ctx, x2, FY + FH - 4, Math.max(3, w2 * pct(s)), 3, 1.5, s.finished ? white(0.45) : col(ACCENT));
   });
   return ctx.getImage();
 }

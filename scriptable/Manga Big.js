@@ -176,30 +176,28 @@ function rhythm(chapters) {
   return weeks;
 }
 
-// ---------- LARGE 364 × 382 ----------
-const W = 364, H = 382, PAD = 18;
+// ---------- LARGE: 364 × 382 on iPhone, square 364 × 364 on the Mac (which draws large widgets square) ----------
+const W = 364, H = Device.isPhone() ? 382 : 364, PAD = 18;
 
 function drawLarge(main, others, updated) {
   const ctx = newCtx(W, H);
   ctx.opaque = true;
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
   const latest = main.chapters[0];
+  const CARD_Y = 222, CARD_H = H - PAD - CARD_Y;
 
   // cover art bleeding in from the right, fading into the page
-  const CW = 236, CX = W - CW, CH = 300;
+  const CW = 214, CX = W - CW, CH = CARD_Y - 6;
   if (main.img) {
-    ctx.drawImageInRect(cover(main.img, CW, CH, 0, 0.15), new Rect(CX, 0, CW, CH));
-    shade(ctx, CX, 0, 150, CH, "h", 1, 0, BG, true);
-    shade(ctx, CX, 150, CW, CH - 150, "v", 0, 1, BG, true);
-    ctx.setFillColor(col(BG, 0.12)); ctx.fillRect(new Rect(CX, 0, CW, CH));
+    ctx.drawImageInRect(cover(main.img, CW, CH, 0, 0.12), new Rect(CX, 0, CW, CH));
+    shade(ctx, CX, 0, 140, CH, "h", 1, 0, BG, true);
+    shade(ctx, CX, CH - 80, CW, 80, "v", 0, 1, BG, true);
+    ctx.setFillColor(col(BG, 0.1)); ctx.fillRect(new Rect(CX, 0, CW, CH));
   }
 
   // screentone + giant ghost chapter number
-  screentone(ctx, 0, 150, 220, 232, 0, H, 230, 2.1, white(0.06));
-  if (latest) {
-    ctx.setFont(display(150)); ctx.setTextColor(white(0.07));
-    ctx.drawText(fmtCh(latest.num), new Point(PAD - 6, 48));
-  }
+  screentone(ctx, 0, 110, 200, 110, 0, 220, 200, 2.1, white(0.06));
+  if (latest) { ctx.setFont(display(140)); ctx.setTextColor(white(0.06)); ctx.drawText(fmtCh(latest.num), new Point(PAD - 6, 52)); }
 
   // kicker
   const fresh = latest && daysAgo(latest.date) < NEW_DAYS;
@@ -210,30 +208,29 @@ function drawLarge(main, others, updated) {
   ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(hot ? 0.85 : 0.6));
   ctx.drawText(track(kick), new Point(kx, PAD));
 
-  // title in poster type
-  const TW = 190, title = main.name.toUpperCase();
-  let tfs = 34; while (tfs > 20 && textWidth(title, tfs, true) > TW) tfs -= 1;
+  // title + author
+  const TW = 196, title = main.name.toUpperCase();
+  let tfs = 32; while (tfs > 20 && textWidth(title, tfs, true) > TW) tfs -= 1;
   ctx.setFont(display(tfs)); ctx.setTextColor(white(1));
-  ctx.drawText(fitLine(title, tfs, TW, true), new Point(PAD, PAD + 13));
-  let y = PAD + 13 + tfs * 1.12;
+  ctx.drawText(fitLine(title, tfs, TW, true), new Point(PAD, PAD + 12));
   if (main.author) {
     ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.5));
-    ctx.drawText(fitLine(main.author, 9.5, TW), new Point(PAD, y));
+    ctx.drawText(fitLine(main.author, 9.5, TW), new Point(PAD, PAD + 13 + tfs * 1.08));
   }
 
   // chapter number, big
   if (latest) {
-    const ny = PAD + 72;
+    const ny = 86;
     ctx.setFont(Font.heavySystemFont(9)); ctx.setTextColor(col(ACCENT));
     ctx.drawText(track("CHAPTER"), new Point(PAD, ny));
-    ctx.setFont(display(62)); ctx.setTextColor(white(1));
-    ctx.drawText(fmtCh(latest.num), new Point(PAD - 2, ny + 8));
+    ctx.setFont(display(56)); ctx.setTextColor(white(1));
+    ctx.drawText(fmtCh(latest.num), new Point(PAD - 2, ny + 7));
     ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.65));
-    ctx.drawText(DAYS[latest.date.getDay()] + ", " + shortDate(latest.date) + "  ·  " + ago(latest.date), new Point(PAD, ny + 84));
+    ctx.drawText(DAYS[latest.date.getDay()] + ", " + shortDate(latest.date) + "  ·  " + ago(latest.date), new Point(PAD, ny + 70));
   }
 
-  // 8-week release rhythm
-  const RY = PAD + 182, weeks = rhythm(main.chapters), SQ = 11, SG = 4;
+  // 8-week release rhythm + Read
+  const RY = 176, weeks = rhythm(main.chapters), SQ = 11, SG = 4;
   ctx.setFont(Font.boldSystemFont(7.5)); ctx.setTextColor(white(0.42));
   ctx.drawText(track("LAST 8 WEEKS"), new Point(PAD, RY));
   weeks.forEach((n, i) => {
@@ -241,43 +238,36 @@ function drawLarge(main, others, updated) {
     if (n > 0) rounded(ctx, x, yy, SQ, SQ, 2.5, last ? col(ACCENT) : white(0.9));
     else strokeRounded(ctx, x + 0.5, yy + 0.5, SQ - 1, SQ - 1, 2.2, white(last ? 0.5 : 0.22), 1);
   });
+  drawPill(ctx, "Read", PAD + 8 * (SQ + SG) + 10, RY + 4);
 
-  drawPill(ctx, "Read", W - PAD - 82, RY + 2);
-
-  // the rest of the list
-  const LY = RY + 40;
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.45));
-  ctx.drawText(track("ALSO READING"), new Point(PAD, LY));
-  ctx.setTextAlignedRight(); ctx.drawTextInRect(updated, new Rect(W - PAD - 120, LY, 120, 12)); ctx.setTextAlignedLeft();
-  const RG = 8, RY0 = LY + 16, RH = (H - PAD - RY0 - RG) / 2;
+  // the rest of the list: big cover cards, cover fills the card, text over a dark fade
+  const GAP = 10, CDW = (W - PAD * 2 - GAP) / 2;
   others.slice(0, 2).forEach((s, i) => {
-    const x = PAD, yy = RY0 + i * (RH + RG), w = W - PAD * 2;
-    rounded(ctx, x, yy, w, RH, 12, white(0.07));
-    strokeRounded(ctx, x + 0.5, yy + 0.5, w - 1, RH - 1, 11.5, white(0.07), 1);
-    const th = RH - 10, tw = Math.round(th * 2 / 3);
-    if (s.img) { CORNER_BG = col("#1c1a1e"); ctx.drawImageInRect(cover(s.img, tw, th, 5, 0.15), new Rect(x + 5, yy + 5, tw, th)); }
-    else rounded(ctx, x + 5, yy + 5, tw, th, 5, col("#2a2630"));
-    const c = s.chapters[0], tx = x + 5 + tw + 10;
-    const isNew = c && daysAgo(c.date) < NEW_DAYS;
+    const x = PAD + i * (CDW + GAP), y = CARD_Y;
+    if (s.img) ctx.drawImageInRect(cover(s.img, CDW, CARD_H, 0, 0.18), new Rect(x, y, CDW, CARD_H));
+    else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(x, y, CDW, CARD_H)); }
+    shade(ctx, x, y + CARD_H * 0.3, CDW, CARD_H * 0.7, "v", 0, 0.94, BG, true);
+    ctx.setStrokeColor(white(0.16)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(x + 0.5, y + 0.5, CDW - 1, CARD_H - 1));
+
+    const c = s.chapters[0], isNew = c && daysAgo(c.date) < NEW_DAYS;
     const badge = s.unread != null ? (s.unread > 0 ? fmtCh(s.unread) + " NEW" : "✓") : isNew ? "NEW" : "";
-    const bw = badge ? Math.max(26, textWidth(badge, 8.5) + 14) : 0;
-    ctx.setFont(display(15)); ctx.setTextColor(white(1));
-    ctx.drawText(fitLine(s.name.toUpperCase(), 15, x + w - tx - bw - 50, true), new Point(tx, yy + RH / 2 - 15));
-    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.55));
-    ctx.drawText(c ? ago(c.date) : "No chapters found", new Point(tx, yy + RH / 2 + 3));
-    // chapter number on the right, poster type
-    if (c) {
-      ctx.setTextAlignedRight(); ctx.setFont(display(20)); ctx.setTextColor(white(0.95));
-      ctx.drawTextInRect(fmtCh(c.num), new Rect(x + w - 12 - bw - (bw ? 8 : 0) - 60, yy + RH / 2 - 13, 60, 26));
-      ctx.setFont(Font.boldSystemFont(7)); ctx.setTextColor(white(0.4));
-      ctx.drawTextInRect(track("CH"), new Rect(x + w - 12 - bw - (bw ? 8 : 0) - 120, yy + RH / 2 - 3.5, 120 - textWidth(fmtCh(c.num), 20, true) - 4, 10));
-      ctx.setTextAlignedLeft();
-    }
     if (badge) {
-      const bx = x + w - 10 - bw, by = yy + RH / 2 - 9, lit = badge !== "✓";
-      if (lit) rounded(ctx, bx, by, bw, 18, 9, col(ACCENT)); else strokeRounded(ctx, bx + 0.5, by + 0.5, bw - 1, 17, 8.5, white(0.4), 1);
-      ctx.setTextAlignedCenter(); ctx.setFont(Font.heavySystemFont(8.5)); ctx.setTextColor(white(lit ? 1 : 0.7));
+      const bw = Math.max(30, textWidth(badge, 8.5) + 14), bx = x + CDW - 8 - bw, by = y + 8, lit = badge !== "✓";
+      rounded(ctx, bx, by, bw, 18, 9, lit ? col(ACCENT) : col(BG, 0.7));
+      ctx.setTextAlignedCenter(); ctx.setFont(Font.heavySystemFont(8.5)); ctx.setTextColor(white(lit ? 1 : 0.8));
       ctx.drawTextInRect(track(badge), new Rect(bx, by + 4, bw, 11)); ctx.setTextAlignedLeft();
+    }
+    const tx = x + 10, tw = CDW - 20, nm = s.name.toUpperCase();
+    let nfs = 17; while (nfs > 12 && textWidth(nm, nfs, true) > tw) nfs -= 0.5;
+    ctx.setFont(display(nfs)); ctx.setTextColor(white(1));
+    ctx.drawText(fitLine(nm, nfs, tw, true), new Point(tx, y + CARD_H - 50));
+    if (c) {
+      ctx.setFont(Font.boldSystemFont(7.5)); ctx.setTextColor(col(ACCENT));
+      ctx.drawText(track("CH"), new Point(tx, y + CARD_H - 21));
+      ctx.setFont(display(20)); ctx.setTextColor(white(1));
+      ctx.drawText(fmtCh(c.num), new Point(tx + 15, y + CARD_H - 30));
+      ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.6));
+      ctx.setTextAlignedRight(); ctx.drawTextInRect(ago(c.date), new Rect(x, y + CARD_H - 22, CDW - 10, 12)); ctx.setTextAlignedLeft();
     }
   });
   return ctx.getImage();
