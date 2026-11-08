@@ -7,7 +7,8 @@
 //
 // SETUP: needs "Simkl Radar" linked once (it reads the same token).
 // Paste into Scriptable, name it "Simkl Big", add a LARGE Scriptable
-// widget, set Script = Simkl Big. Tap the widget = resume in Nuvio.
+// (or EXTRA LARGE, on Mac/iPad) widget, set Script = Simkl Big.
+// It draws the matching layout for each size. Tap = resume in Nuvio.
 // ============================================
 
 const CLIENT_ID = "70a1d2b1c1b5c2ed32bd9bbd498b5cc8e00d2a0d0ddf0f29849472492b0889ce";
@@ -183,8 +184,93 @@ function shade(ctx, x, y, w, h, dir, a0, a1, hex) {
   }
 }
 
+// ---------- shared pieces (large + extra large) ----------
+const BG = "#0e0c10";
+
+function drawBackdrop(ctx, hero, w, heroH, fadeFrom) {
+  if (!hero.backdrop) return;
+  // cropped off-screen first: DrawContext doesn't clip, so a wide widget's tall art would spill into the cards.
+  // fanart anchored low so baked-in logos at the top are cropped away
+  ctx.drawImageInRect(cover(hero.backdrop, w, heroH, 0, hero.fanartReal ? 0.78 : 0.35), new Rect(0, 0, w, heroH));
+  ctx.setFillColor(col(BG, 0.3)); ctx.fillRect(new Rect(0, 0, w, heroH));   // tame bright art
+  shade(ctx, 0, 0, w, heroH, "h", 0.9, 0.2, BG);                           // dark on the left for text
+  shade(ctx, 0, fadeFrom, w, heroH - fadeFrom, "v", 0, 1, BG);             // fade into the card
+}
+
+function drawPoster(ctx, img, x, y, w, h) {
+  rounded(ctx, x - 1, y - 1, w + 2, h + 2, 11, white(0.14));
+  if (img) { CORNER_BG = col(BG); ctx.drawImageInRect(cover(img, w, h, 10, 0.3), new Rect(x, y, w, h)); }
+  else rounded(ctx, x, y, w, h, 10, col("#2a2630"));
+}
+
+function drawKicker(ctx, hero, x, y) {
+  const kick = hero.finished ? (hero.kind === "movie" ? "JUST WATCHED" : "JUST FINISHED") : "NOW WATCHING";
+  let kx = x;
+  if (!hero.finished) { dot(ctx, x + 3.5, y + 5.5, 3.5, col(ACCENT)); kx = x + 12; }
+  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.62)); ctx.setTextAlignedLeft();
+  ctx.drawText(track(kick), new Point(kx, y));
+}
+
+function metaLine(hero) {
+  const typ = hero.kind === "movie" ? "MOVIE" : hero.kind === "anime" ? "ANIME" : "TV";
+  return [hero.year, hero.kind === "movie" ? (hero.runtime ? hero.runtime + " min" : null) : hero.total ? hero.total + " eps" : null, typ]
+    .filter(Boolean).join("  ·  ");
+}
+
+// "▶ Resume" pill (whole widget taps through to it): icon + label centred as one group
+function drawPill(ctx, hero, x, y) {
+  const label = hero.finished ? "Watch again" : "Resume";
+  const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
+  const labelW = Math.ceil(textWidth(label, PFS) * 1.08);      // a little slack: estimates run short
+  const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, midY = y + PILL_H / 2;
+  rounded(ctx, x, y, pillW, PILL_H, PILL_H / 2, white(0.94));
+  const ix = x + PAD_X;
+  ctx.setFillColor(col("#111111"));
+  const tri = new Path(); tri.move(new Point(ix, midY - 5)); tri.addLine(new Point(ix, midY + 5)); tri.addLine(new Point(ix + ICON_W, midY));
+  tri.closeSubpath(); ctx.addPath(tri); ctx.fillPath();
+  ctx.setFont(Font.boldSystemFont(PFS)); ctx.setTextColor(col("#111111")); ctx.setTextAlignedCenter();
+  ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));   // SF caps centre ≈ 0.6em below line top
+  ctx.setTextAlignedLeft();
+  return pillW;
+}
+
+// big % (or ✓) + one tick per episode + caption
+function drawProgress(ctx, hero, x, y, right, numFs) {
+  const p = pct(hero), k = numFs / 34;
+  ctx.setTextColor(white(1));
+  if (hero.finished) {
+    const c = new Path(); c.move(new Point(x + 2 * k, y + 15 * k)); c.addLine(new Point(x + 11 * k, y + 24 * k)); c.addLine(new Point(x + 27 * k, y + 5 * k));
+    ctx.addPath(c); ctx.setStrokeColor(white(1)); ctx.setLineWidth(4.5 * k); ctx.strokePath();
+  } else {
+    const num = String(Math.round(p * 100));
+    ctx.setFont(Font.heavySystemFont(numFs)); ctx.drawText(num, new Point(x - 1, y - 4 * k));
+    ctx.setFont(Font.boldSystemFont(13 * k)); ctx.setTextColor(white(0.6));
+    ctx.drawText("%", new Point(x + num.length * numFs * 0.6 + 1, y));
+  }
+  const BX = x + 78 * k, BW = right - BX, n = hero.total;
+  if (hero.kind !== "movie" && n && n <= 30) {
+    const lit = hero.finished ? n : Math.min(n, hero.watched || 0), gap = n > 20 ? 2 : 3, tw = (BW - gap * (n - 1)) / n;
+    for (let i = 0; i < n; i++) {
+      if (i === lit && !hero.finished) strokeRounded(ctx, BX + i * (tw + gap) + 0.6, y + 4.6, tw - 1.2, 8.8, 2, col(ACCENT), 1.2);
+      else rounded(ctx, BX + i * (tw + gap), y + 4, tw, 10, 2.2, white(i < lit ? 1 : 0.16));
+    }
+  } else {
+    rounded(ctx, BX, y + 5, BW, 8, 4, white(0.16));
+    if (p > 0) rounded(ctx, BX, y + 5, Math.max(8, BW * p), 8, 4, white(1));
+  }
+  const cap = [hero.finished ? (hero.kind === "movie" ? "Watched" : "Series completed") : sub(hero), ago(hero.last)].filter(Boolean).join("  ·  ");
+  ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.62));
+  ctx.drawText(fitLine(cap, 10.5, BW), new Point(BX, y + 21));
+}
+
+function drawCheck(ctx, cx, cy) {
+  dot(ctx, cx, cy, 6.5, white(0.85));
+  const k = new Path(); k.move(new Point(cx - 3, cy)); k.addLine(new Point(cx - 0.8, cy + 2.4)); k.addLine(new Point(cx + 3.4, cy - 2.6));
+  ctx.addPath(k); ctx.setStrokeColor(col("#111111")); ctx.setLineWidth(1.6); ctx.strokePath();
+}
+
 // ---------- LARGE 364 × 382 ----------
-const W = 364, H = 382, PAD = 16, BG = "#0e0c10";
+const W = 364, H = 382, PAD = 16;
 
 function drawLarge(hero, rows, updated) {
   const ctx = newCtx(W, H);
@@ -192,86 +278,26 @@ function drawLarge(hero, rows, updated) {
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
   CORNER_BG = col(BG);
 
-  // backdrop: fanart (anchored low so baked-in logos at the top are cropped away) or blurred poster
-  const HERO_H = 236;
-  if (hero.backdrop) {
-    const b = hero.backdrop, iw = b.size.width, ih = b.size.height, sc = Math.max(W / iw, HERO_H / ih);
-    ctx.drawImageInRect(b, new Rect((W - iw * sc) / 2, (HERO_H - ih * sc) * (hero.fanartReal ? 0.78 : 0.35), iw * sc, ih * sc));
-    ctx.setFillColor(col(BG, 0.3)); ctx.fillRect(new Rect(0, 0, W, HERO_H));   // tame bright art
-    shade(ctx, 0, 0, W, HERO_H, "h", 0.9, 0.2, BG);                           // dark on the left for text
-    shade(ctx, 0, 106, W, HERO_H - 106, "v", 0, 1, BG);                       // fade into the card
-  }
+  drawBackdrop(ctx, hero, W, 236, 106);
 
-  // poster
   const PX = PAD, PY = PAD, PW = 92, PH = 138;
-  rounded(ctx, PX - 1, PY - 1, PW + 2, PH + 2, 11, white(0.14));
-  if (hero.img) {
-    CORNER_BG = col(BG);
-    ctx.drawImageInRect(cover(hero.img, PW, PH, 10, 0.3), new Rect(PX, PY, PW, PH));
-  } else rounded(ctx, PX, PY, PW, PH, 10, col("#2a2630"));
+  drawPoster(ctx, hero.img, PX, PY, PW, PH);
 
-  // kicker + updated time
   const TX = PX + PW + 14, TW = W - PAD - TX;
-  const kick = hero.finished ? (hero.kind === "movie" ? "JUST WATCHED" : "JUST FINISHED") : "NOW WATCHING";
-  let kx = TX;
-  if (!hero.finished) { dot(ctx, TX + 3.5, PY + 7, 3.5, col(ACCENT)); kx = TX + 12; }
-  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.62)); ctx.setTextAlignedLeft();
-  ctx.drawText(track(kick), new Point(kx, PY + 1.5));
+  drawKicker(ctx, hero, TX, PY + 1.5);
 
   // title (1–2 lines, auto size)
   const lay = layoutTitle(hero.title, TW, [26, 23, 20, 17]);
   let y = PY + 18;
   ctx.setFont(Font.heavySystemFont(lay.fs)); ctx.setTextColor(white(1));
   for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX, y)); y += lay.fs * 1.08; }
-
-  // meta
-  const typ = hero.kind === "movie" ? "MOVIE" : hero.kind === "anime" ? "ANIME" : "TV";
-  const meta = [hero.year, hero.kind === "movie" ? (hero.runtime ? hero.runtime + " min" : null) : hero.total ? hero.total + " eps" : null, typ]
-    .filter(Boolean).join("  ·  ");
   ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.55));
-  ctx.drawText(fitLine(meta, 10.5, TW), new Point(TX, y + 5));
+  ctx.drawText(fitLine(metaLine(hero), 10.5, TW), new Point(TX, y + 5));
 
-  // "▶ Resume" pill (whole widget taps through to it): icon + label centred as one group
-  const pillLabel = hero.finished ? "Watch again" : "Resume";
-  const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
-  const labelW = Math.ceil(textWidth(pillLabel, PFS) * 1.08);      // a little slack: estimates run short
-  const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, pillY = PY + PH - PILL_H, midY = pillY + PILL_H / 2;
-  rounded(ctx, TX, pillY, pillW, PILL_H, PILL_H / 2, white(0.94));
-  const ix = TX + PAD_X;
-  ctx.setFillColor(col("#111111"));
-  const tri = new Path(); tri.move(new Point(ix, midY - 5)); tri.addLine(new Point(ix, midY + 5)); tri.addLine(new Point(ix + ICON_W, midY));
-  tri.closeSubpath(); ctx.addPath(tri); ctx.fillPath();
-  ctx.setFont(Font.boldSystemFont(PFS)); ctx.setTextColor(col("#111111")); ctx.setTextAlignedCenter();
-  ctx.drawTextInRect(pillLabel, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));   // SF caps centre ≈ 0.6em below line top
-  ctx.setTextAlignedLeft();
+  drawPill(ctx, hero, TX, PY + PH - 28);
 
-  // progress: big % + ticks + caption
   const RY = PY + PH + 16;
-  const p = pct(hero);
-  ctx.setTextColor(white(1));
-  if (hero.finished) {
-    const k = new Path(); k.move(new Point(PAD + 2, RY + 15)); k.addLine(new Point(PAD + 11, RY + 24)); k.addLine(new Point(PAD + 27, RY + 5));
-    ctx.addPath(k); ctx.setStrokeColor(white(1)); ctx.setLineWidth(4.5); ctx.strokePath();
-  } else {
-    const num = String(Math.round(p * 100));
-    ctx.setFont(Font.heavySystemFont(34)); ctx.drawText(num, new Point(PAD - 1, RY - 4));
-    ctx.setFont(Font.boldSystemFont(13)); ctx.setTextColor(white(0.6));
-    ctx.drawText("%", new Point(PAD + num.length * 34 * 0.6 + 1, RY));
-  }
-  const BX = PAD + 78, BW = W - PAD - BX, n = hero.total;
-  if (hero.kind !== "movie" && n && n <= 30) {
-    const lit = hero.finished ? n : Math.min(n, hero.watched || 0), gap = n > 20 ? 2 : 3, tw = (BW - gap * (n - 1)) / n;
-    for (let i = 0; i < n; i++) {
-      if (i === lit && !hero.finished) strokeRounded(ctx, BX + i * (tw + gap) + 0.6, RY + 4.6, tw - 1.2, 8.8, 2, col(ACCENT), 1.2);
-      else rounded(ctx, BX + i * (tw + gap), RY + 4, tw, 10, 2.2, white(i < lit ? 1 : 0.16));
-    }
-  } else {
-    rounded(ctx, BX, RY + 5, BW, 8, 4, white(0.16));
-    if (p > 0) rounded(ctx, BX, RY + 5, Math.max(8, BW * p), 8, 4, white(1));
-  }
-  const cap = [hero.finished ? (hero.kind === "movie" ? "Watched" : "Series completed") : sub(hero), ago(hero.last)].filter(Boolean).join("  ·  ");
-  ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.62));
-  ctx.drawText(fitLine(cap, 10.5, BW), new Point(BX, RY + 21));
+  drawProgress(ctx, hero, PAD, RY, W - PAD, 34);
 
   // recently watched: 2×2 cards
   const LY = RY + 46;
@@ -297,11 +323,65 @@ function drawLarge(hero, rows, updated) {
     const bw = cx + CW - 9 - x2, bp = pct(s);
     rounded(ctx, x2, cy + CH - 12, bw, 3.5, 1.75, white(0.14));
     rounded(ctx, x2, cy + CH - 12, Math.max(3.5, bw * bp), 3.5, 1.75, white(s.finished ? 0.45 : 1));
-    if (s.finished) {
-      dot(ctx, cx + CW - 13, cy + 13, 6.5, white(0.85));
-      const k = new Path(); k.move(new Point(cx + CW - 16, cy + 13)); k.addLine(new Point(cx + CW - 13.8, cy + 15.4)); k.addLine(new Point(cx + CW - 9.6, cy + 10.4));
-      ctx.addPath(k); ctx.setStrokeColor(col("#111111")); ctx.setLineWidth(1.6); ctx.strokePath();
-    }
+    if (s.finished) drawCheck(ctx, cx + CW - 13, cy + 13);
+  });
+  return ctx.getImage();
+}
+
+// ---------- EXTRA LARGE ~730 × 358 (wide; Mac desktop / iPad) ----------
+const XW = 730, XH = 358, XPAD = 20;
+
+function drawXL(hero, rows, updated) {
+  const ctx = newCtx(XW, XH);
+  ctx.opaque = true;
+  ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, XW, XH));
+  CORNER_BG = col(BG);
+  drawBackdrop(ctx, hero, XW, 214, 96);
+
+  const PX = XPAD, PY = XPAD, PW = 112, PH = 168;
+  drawPoster(ctx, hero.img, PX, PY, PW, PH);
+
+  const TX = PX + PW + 18, RIGHT = XW - XPAD, TW = RIGHT - TX;
+  drawKicker(ctx, hero, TX, PY + 2);
+
+  let lay = layoutTitle(hero.title, TW, [34, 30, 26]);
+  if (lay.lines.length === 2) lay = layoutTitle(hero.title, TW, [22, 20, 18]);
+  let y = PY + 20;
+  ctx.setFont(Font.heavySystemFont(lay.fs)); ctx.setTextColor(white(1));
+  for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX, y)); y += lay.fs * 1.08; }
+  ctx.setFont(Font.semiboldSystemFont(11.5)); ctx.setTextColor(white(0.55));
+  ctx.drawText(fitLine(metaLine(hero), 11.5, TW), new Point(TX, y + 6));
+
+  drawProgress(ctx, hero, TX, Math.max(PY + 92, y + 30), RIGHT, 40);
+  drawPill(ctx, hero, TX, PY + PH - 28);
+
+  // recently watched: 4 across
+  const LY = PY + PH + 18;
+  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.5));
+  ctx.drawText(track("RECENTLY WATCHED"), new Point(XPAD, LY));
+  ctx.setTextAlignedRight(); ctx.drawTextInRect(updated, new Rect(RIGHT - 120, LY, 120, 12)); ctx.setTextAlignedLeft();
+
+  const GY = LY + 16, GAP = 10, CW = (XW - XPAD * 2 - GAP * 3) / 4, CH = XH - XPAD - GY;
+  rows.slice(0, 4).forEach((s, i) => {
+    const cx = XPAD + i * (CW + GAP), cy = GY;
+    rounded(ctx, cx, cy, CW, CH, 12, white(0.065));
+    strokeRounded(ctx, cx + 0.5, cy + 0.5, CW - 1, CH - 1, 11.5, white(0.08), 1);
+    const th = CH - 16, tw = Math.round(th * 2 / 3);
+    if (s.img) { CORNER_BG = col("#1a181c"); ctx.drawImageInRect(cover(s.img, tw, th, 6, 0.3), new Rect(cx + 8, cy + 8, tw, th)); }
+    else rounded(ctx, cx + 8, cy + 8, tw, th, 6, col("#2a2630"));
+    const x2 = cx + 8 + tw + 9, w2 = cx + CW - 9 - x2;
+    const tl = layoutTitle(s.title, w2 - (s.finished ? 15 : 0), [11.5]);
+    let ty = cy + 9;
+    ctx.setFont(Font.boldSystemFont(11.5)); ctx.setTextColor(white(1));
+    for (const ln of tl.lines) { ctx.drawText(ln, new Point(x2, ty)); ty += 13.5; }
+    const line1 = s.kind === "movie" ? (s.finished ? "Watched" : "Movie · " + Math.round(pct(s) * 100) + "%") : sub(s);
+    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.6));
+    ctx.drawText(fitLine(line1, 9.5, w2), new Point(x2, ty + 3));
+    ctx.setTextColor(white(0.4));
+    ctx.drawText(fitLine(ago(s.last), 9.5, w2), new Point(x2, ty + 16));
+    rounded(ctx, x2, cy + CH - 13, w2, 3.5, 1.75, white(0.14));
+    rounded(ctx, x2, cy + CH - 13, Math.max(3.5, w2 * pct(s)), 3.5, 1.75, white(s.finished ? 0.45 : 1));
+    if (s.finished) drawCheck(ctx, cx + CW - 13, cy + 13);
   });
   return ctx.getImage();
 }
@@ -320,6 +400,8 @@ function message(title, body) {
 }
 
 // ---------- main ----------
+const PREVIEW = "large";   // in-app preview: "large" or "extraLarge"
+const WIDE = (config.runsInWidget ? config.widgetFamily : PREVIEW) === "extraLarge";
 let widget;
 if (!token) {
   widget = message("Link Simkl first", "Run the \"Simkl Radar\" script once in Scriptable to connect your account.");
@@ -341,7 +423,7 @@ if (!token) {
     const df = new DateFormatter(); df.useNoDateStyle(); df.useShortTimeStyle();
     widget = new ListWidget();
     widget.setPadding(0, 0, 0, 0);
-    widget.backgroundImage = drawLarge(hero, rows, df.string(new Date()));
+    widget.backgroundImage = WIDE ? drawXL(hero, rows, df.string(new Date())) : drawLarge(hero, rows, df.string(new Date()));
     widget.url = WATCH_APP === "nuvio"
       ? "nuvio://search?query=" + encodeURIComponent(hero.title)
       : "https://simkl.com/search/?q=" + encodeURIComponent(hero.title);
@@ -349,5 +431,6 @@ if (!token) {
 }
 widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
 if (config.runsInWidget) Script.setWidget(widget);
+else if (WIDE) await widget.presentExtraLarge();
 else await widget.presentLarge();
 Script.complete();
