@@ -231,15 +231,19 @@ function drawLarge(hero, rows, updated) {
   ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.55));
   ctx.drawText(fitLine(meta, 10.5, TW), new Point(TX, y + 5));
 
-  // "▶ Resume" pill (whole widget taps through to it)
-  const pillY = PY + PH - 26, pillLabel = hero.finished ? "Watch again" : "Resume";
-  const pillW = textWidth(pillLabel, 11) + 34;
-  rounded(ctx, TX, pillY, pillW, 26, 13, white(0.94));
+  // "▶ Resume" pill (whole widget taps through to it): icon + label centred as one group
+  const pillLabel = hero.finished ? "Watch again" : "Resume";
+  const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
+  const labelW = Math.ceil(textWidth(pillLabel, PFS) * 1.08);      // a little slack: estimates run short
+  const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, pillY = PY + PH - PILL_H, midY = pillY + PILL_H / 2;
+  rounded(ctx, TX, pillY, pillW, PILL_H, PILL_H / 2, white(0.94));
+  const ix = TX + PAD_X;
   ctx.setFillColor(col("#111111"));
-  const tri = new Path(); tri.move(new Point(TX + 12, pillY + 8)); tri.addLine(new Point(TX + 12, pillY + 18)); tri.addLine(new Point(TX + 20, pillY + 13));
+  const tri = new Path(); tri.move(new Point(ix, midY - 5)); tri.addLine(new Point(ix, midY + 5)); tri.addLine(new Point(ix + ICON_W, midY));
   tri.closeSubpath(); ctx.addPath(tri); ctx.fillPath();
-  ctx.setFont(Font.boldSystemFont(11)); ctx.setTextColor(col("#111111"));
-  ctx.drawText(pillLabel, new Point(TX + 25, pillY + 6));
+  ctx.setFont(Font.boldSystemFont(PFS)); ctx.setTextColor(col("#111111")); ctx.setTextAlignedCenter();
+  ctx.drawTextInRect(pillLabel, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));   // SF caps centre ≈ 0.6em below line top
+  ctx.setTextAlignedLeft();
 
   // progress: big % + ticks + caption
   const RY = PY + PH + 16;
