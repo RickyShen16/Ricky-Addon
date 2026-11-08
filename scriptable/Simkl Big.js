@@ -33,7 +33,8 @@ async function loadImage(url) {
   try { const r = new Request(url); r.timeoutInterval = 15; return await r.loadImage(); } catch (e) { return null; }
 }
 const posterUrl = (p) => p ? "https://simkl.in/posters/" + p + "_m.jpg" : null;
-const fanartUrl = (f) => f ? "https://simkl.in/fanart/" + f + "_medium.jpg" : null;
+// pre-shrunk to 1100 px: the full 1920×1080 file costs ~8 MB decoded, and widgets only get ~30 MB in total
+const fanartUrl = (f) => f ? "https://wsrv.nl/?url=simkl.in/fanart/" + f + "_medium.jpg&w=1100&output=jpg&q=82" : null;
 // no fanart → the poster, heavily blurred, as an ambient backdrop
 const blurPosterUrl = (p) => p ? "https://wsrv.nl/?url=simkl.in/posters/" + p + "_m.jpg&w=400&blur=30&output=jpg" : null;
 
@@ -381,7 +382,9 @@ function drawXL(hero, rows, updated) {
 
   // full-bleed backdrop, dark on the left and along the bottom
   if (hero.backdrop) {
-    ctx.drawImageInRect(cover(hero.backdrop, XW, XH, 0, hero.fanartReal ? 0.6 : 0.35), new Rect(0, 0, XW, XH));
+    // full-bleed, drawn straight in: the canvas edge crops it, so no second full-size copy (memory)
+    const b = hero.backdrop, sc = Math.max(XW / b.size.width, XH / b.size.height), dw = b.size.width * sc, dh = b.size.height * sc;
+    ctx.drawImageInRect(b, new Rect((XW - dw) / 2, (XH - dh) * (hero.fanartReal ? 0.6 : 0.35), dw, dh));
     ctx.setFillColor(col(BG, 0.32)); ctx.fillRect(new Rect(0, 0, XW, XH));
     eased(ctx, 0, 0, 600, XH, "h", 0.97, 0);
     eased(ctx, 0, 150, XW, XH - 150, "v", 0, 0.97);
@@ -507,6 +510,7 @@ if (!token) {
   widget = message("Link Simkl first", "Run the \"Simkl Radar\" script once in Scriptable to connect your account.");
   widget.url = "scriptable:///run/" + encodeURIComponent("Simkl Radar");
 } else {
+  try {
   let items = [];
   try { items = await loadItems(); } catch (e) { items = []; }
   if (!items.length) {
@@ -527,6 +531,10 @@ if (!token) {
     widget.url = WATCH_APP === "nuvio"
       ? "nuvio://search?query=" + encodeURIComponent(hero.title)
       : "https://simkl.com/search/?q=" + encodeURIComponent(hero.title);
+  }
+  } catch (e) {
+    // show the problem on the widget instead of a blank tile
+    widget = message("Simkl Big hit an error", String(e && e.message || e).slice(0, 160));
   }
 }
 widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
