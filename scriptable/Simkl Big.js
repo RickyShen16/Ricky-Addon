@@ -274,7 +274,7 @@ function metaLine(hero) {
 function drawPill(ctx, hero, x, y, labelOverride) {
   const label = labelOverride || (hero.finished ? "Watch again" : "Resume");
   const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
-  const labelW = Math.ceil(textWidth(label, PFS) * 1.08);      // a little slack: estimates run short
+  const labelW = Math.ceil(textWidth(label, PFS) * 1.25);      // generous: the Mac's font runs wider than the estimate
   const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, midY = y + PILL_H / 2;
   rounded(ctx, x, y, pillW, PILL_H, PILL_H / 2, white(0.94));
   const ix = x + PAD_X;
@@ -282,7 +282,8 @@ function drawPill(ctx, hero, x, y, labelOverride) {
   const tri = new Path(); tri.move(new Point(ix, midY - 5)); tri.addLine(new Point(ix, midY + 5)); tri.addLine(new Point(ix + ICON_W, midY));
   tri.closeSubpath(); ctx.addPath(tri); ctx.fillPath();
   ctx.setFont(Font.boldSystemFont(PFS)); ctx.setTextColor(col("#111111")); ctx.setTextAlignedCenter();
-  ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));   // SF caps centre ≈ 0.6em below line top
+  // the text box is 40pt wider than the label, centred on the same spot: text never gets clipped (that turned "Read" into "Rea")
+  ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I - 20, midY - PFS * 0.6, labelW + 40, PFS * 1.3));   // SF caps centre ≈ 0.6em below line top
   ctx.setTextAlignedLeft();
   return pillW;
 }
@@ -420,10 +421,10 @@ function eased(ctx, x, y, w, h, dir, a0, a1) {
   }
 }
 function outlinePill(ctx, label, x, y) {
-  const fs = 11, w = Math.ceil(textWidth(label, fs) * 1.08) + 30;
+  const fs = 11, w = Math.ceil(textWidth(label, fs) * 1.2) + 30;
   strokeRounded(ctx, x + 0.5, y + 0.5, w - 1, 27, 13.5, white(0.45), 1);
   ctx.setFont(Font.boldSystemFont(fs)); ctx.setTextColor(white(0.95)); ctx.setTextAlignedCenter();
-  ctx.drawTextInRect(label, new Rect(x, y + 14 - fs * 0.6, w, fs * 1.3)); ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(label, new Rect(x - 20, y + 14 - fs * 0.6, w + 40, fs * 1.3)); ctx.setTextAlignedLeft();
   return w;
 }
 
@@ -488,7 +489,7 @@ function drawXL(hero, rows, updated) {
   // synopsis, two lines
   if (hero.overview) {
     ctx.setFont(Font.regularSystemFont ? Font.regularSystemFont(10.5) : Font.systemFont(10.5)); ctx.setTextColor(white(0.6));
-    wrapLines(hero.overview, 10.5, TW, 2).forEach((ln, i) => ctx.drawText(ln, new Point(TX, LOGO_BOTTOM + 31 + i * 14)));
+    wrapLines(hero.overview, 10.5, TW - 40, 2).forEach((ln, i) => ctx.drawText(ln, new Point(TX, LOGO_BOTTOM + 31 + i * 14)));
   }
 
   // progress: slim episode segments (or a line) + % on the right

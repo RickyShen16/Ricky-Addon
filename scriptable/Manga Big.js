@@ -171,7 +171,7 @@ function screentone(ctx, x, y, w, h, fromX, fromY, reach, maxR, c) {
 }
 function drawPill(ctx, label, x, y) {
   const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
-  const labelW = Math.ceil(textWidth(label, PFS) * 1.08);
+  const labelW = Math.ceil(textWidth(label, PFS) * 1.25);      // generous: the Mac's font runs wider than the estimate
   const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, midY = y + PILL_H / 2;
   rounded(ctx, x, y, pillW, PILL_H, PILL_H / 2, white(0.95));
   const ix = x + PAD_X;
@@ -180,7 +180,8 @@ function drawPill(ctx, label, x, y) {
   page([new Point(ix + 3.6, midY - 3), new Point(ix - 0.5, midY - 5), new Point(ix - 0.5, midY + 3.8), new Point(ix + 3.6, midY + 5.6)]);
   page([new Point(ix + 4.6, midY - 3), new Point(ix + 8.7, midY - 5), new Point(ix + 8.7, midY + 3.8), new Point(ix + 4.6, midY + 5.6)]);
   ctx.setFont(Font.boldSystemFont(PFS)); ctx.setTextColor(col("#111111")); ctx.setTextAlignedCenter();
-  ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I, midY - PFS * 0.6, labelW, PFS * 1.3));
+  // the text box is 40pt wider than the label, centred on the same spot: text never gets clipped (that turned "Read" into "Rea")
+  ctx.drawTextInRect(label, new Rect(ix + ICON_W + GAP_I - 20, midY - PFS * 0.6, labelW + 40, PFS * 1.3));
   ctx.setTextAlignedLeft();
 }
 // which of the last 8 weeks (Mon–Sun) had a chapter; [oldest … this week]
@@ -283,7 +284,7 @@ function drawLarge(main, others, updated) {
       ctx.setFont(Font.boldSystemFont(7.5)); ctx.setTextColor(col(ACCENT));
       ctx.drawText(track("CH"), new Point(tx, y + CARD_H - 21));
       ctx.setFont(display(20)); ctx.setTextColor(white(1));
-      ctx.drawText(fmtCh(c.num), new Point(tx + 15, y + CARD_H - 30));
+      ctx.drawText(fmtCh(c.num), new Point(tx + 19, y + CARD_H - 30));
       ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.6));
       ctx.setTextAlignedRight(); ctx.drawTextInRect(ago(c.date), new Rect(x, y + CARD_H - 22, CDW - 10, 12)); ctx.setTextAlignedLeft();
     }
