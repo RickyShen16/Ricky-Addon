@@ -11,10 +11,12 @@
 // ============================================
 
 // first entry is the big one
+// anilistId: artwork (banner + hi-res cover) and, if your list is public, your progress.
+// focus: where to crop the cover, 0 = top … 1 = bottom (keeps logos out, faces in).
 const SERIES = [
-  { id: "01J76XYGGM22WZP7T4TKA4ZFAF", name: "Kagurabachi", anilistId: null },
-  { id: "01J76XYE3130E1W5HKTJ7VD912", name: "Sakamoto Days", anilistId: null },
-  { id: "01JR0D52BNWR8TTEFSNCRX36AP", name: "Phantom Busters", anilistId: null },
+  { id: "01J76XYGGM22WZP7T4TKA4ZFAF", name: "Kagurabachi", anilistId: 169355, focus: 0.66 },
+  { id: "01J76XYE3130E1W5HKTJ7VD912", name: "Sakamoto Days", anilistId: 125828, focus: 0.6 },
+  { id: "01JR0D52BNWR8TTEFSNCRX36AP", name: "Phantom Busters", anilistId: 168985, focus: 0.22 },
 ];
 const ANILIST_USERNAME = "MastaDeBlasta";
 const ACCENT = "#ff3b30";
@@ -45,6 +47,22 @@ async function loadImage(url, headers) {
   try { const r = new Request(url); if (headers) r.headers = headers; r.timeoutInterval = 15; return await r.loadImage(); } catch (e) { return null; }
 }
 const coverUrl = (id) => "https://temp.compsci88.com/cover/fallback/" + id + ".jpg";
+
+// AniList artwork (public, no login): wide banner + hi-res cover, by id
+async function fetchArt() {
+  const ids = SERIES.map((s) => s.anilistId).filter(Boolean);
+  if (!ids.length) return {};
+  try {
+    const r = new Request("https://graphql.anilist.co");
+    r.method = "POST"; r.timeoutInterval = 12;
+    r.headers = { "Content-Type": "application/json", "Accept": "application/json" };
+    r.body = JSON.stringify({ query: "query($ids:[Int]){Page(perPage:20){media(id_in:$ids,type:MANGA){id bannerImage coverImage{extraLarge}}}}", variables: { ids } });
+    const j = await r.loadJSON();
+    const out = {};
+    for (const m of (j && j.data && j.data.Page && j.data.Page.media) || []) out[m.id] = { banner: m.bannerImage || null, cover: m.coverImage && m.coverImage.extraLarge };
+    return out;
+  } catch (e) { return {}; }
+}
 
 const norm = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 async function fetchProgress() {
@@ -189,7 +207,7 @@ function drawLarge(main, others, updated) {
   // cover art bleeding in from the right, fading into the page
   const CW = 214, CX = W - CW, CH = CARD_Y - 6;
   if (main.img) {
-    ctx.drawImageInRect(cover(main.img, CW, CH, 0, 0.12), new Rect(CX, 0, CW, CH));
+    ctx.drawImageInRect(cover(main.img, CW, CH, 0, main.focus == null ? 0.3 : main.focus), new Rect(CX, 0, CW, CH));
     shade(ctx, CX, 0, 140, CH, "h", 1, 0, BG, true);
     shade(ctx, CX, CH - 80, CW, 80, "v", 0, 1, BG, true);
     ctx.setFillColor(col(BG, 0.1)); ctx.fillRect(new Rect(CX, 0, CW, CH));
@@ -244,7 +262,7 @@ function drawLarge(main, others, updated) {
   const GAP = 10, CDW = (W - PAD * 2 - GAP) / 2;
   others.slice(0, 2).forEach((s, i) => {
     const x = PAD + i * (CDW + GAP), y = CARD_Y;
-    if (s.img) ctx.drawImageInRect(cover(s.img, CDW, CARD_H, 0, 0.18), new Rect(x, y, CDW, CARD_H));
+    if (s.img) ctx.drawImageInRect(cover(s.img, CDW, CARD_H, 0, s.imgIsBanner ? 0.5 : (s.focus == null ? 0.25 : s.focus)), new Rect(x, y, CDW, CARD_H));
     else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(x, y, CDW, CARD_H)); }
     shade(ctx, x, y + CARD_H * 0.3, CDW, CARD_H * 0.7, "v", 0, 0.94, BG, true);
     ctx.setStrokeColor(white(0.16)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(x + 0.5, y + 0.5, CDW - 1, CARD_H - 1));
@@ -274,7 +292,7 @@ function drawLarge(main, others, updated) {
 }
 
 // ---------- main ----------
-const [pages, progress] = await Promise.all([Promise.all(SERIES.map((s) => fetchSeries(s.id))), fetchProgress()]);
+const [pages, progress, art] = await Promise.all([Promise.all(SERIES.map((s) => fetchSeries(s.id))), fetchProgress(), fetchArt()]);
 const list = SERIES.map((s, i) => {
   const { chapters, author } = pages[i];
   const read = typeof progress[s.id] === "number" ? progress[s.id] : null;
@@ -283,9 +301,16 @@ const list = SERIES.map((s, i) => {
 });
 const main = list[0];
 const others = list.slice(1).sort((a, b) => (b.chapters[0] ? b.chapters[0].date : 0) - (a.chapters[0] ? a.chapters[0].date : 0));
-const imgs = await Promise.all([loadImage(coverUrl(main.id), UA), ...others.slice(0, 2).map((s) => loadImage(coverUrl(s.id), UA))]);
-main.img = imgs[0];
-others.slice(0, 2).forEach((s, i) => { s.img = imgs[1 + i]; });
+// hero: hi-res cover cropped by focus; cards: the wide banner when there is one (no logos), else the cover
+const pick = async (urls) => { for (const [u, h, kind] of urls) { if (!u) continue; const im = await loadImage(u, h); if (im) return { im, kind }; } return { im: null }; };
+const A = (s) => art[s.anilistId] || {};
+const cards = others.slice(0, 2);
+const imgs = await Promise.all([
+  pick([[A(main).cover], [coverUrl(main.id), UA]]),
+  ...cards.map((s) => pick([[A(s).banner, null, "banner"], [A(s).cover], [coverUrl(s.id), UA]])),
+]);
+main.img = imgs[0].im;
+cards.forEach((s, i) => { s.img = imgs[1 + i].im; s.imgIsBanner = imgs[1 + i].kind === "banner"; });
 
 const widget = new ListWidget();
 widget.setPadding(0, 0, 0, 0);

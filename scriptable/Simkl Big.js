@@ -15,6 +15,9 @@
 const CLIENT_ID = "70a1d2b1c1b5c2ed32bd9bbd498b5cc8e00d2a0d0ddf0f29849472492b0889ce";
 const ACCENT = "#ff4b3e";            // live dot + next-episode tick
 const WATCH_APP = "nuvio";           // "nuvio" | "simkl"  (what a tap opens)
+// Free TMDB key (themoviedb.org → Settings → API): official title logos and clean scene stills
+// for the extra-large layout. Without it, it falls back to Simkl art and text titles.
+const TMDB_KEY = "";
 
 const API = "https://api.simkl.com";
 // The Simkl login lives in Scriptable's local folder on the phone ("Simkl Radar" saves it there).
@@ -97,17 +100,43 @@ async function loadItems() {
     .filter((x) => { const k = x.kind + ":" + x.title.toLowerCase(); if (seen[k]) return false; seen[k] = true; return true; });
 }
 
-// the sync lists often omit fanart; fetch it for the hero only (public endpoint)
-async function heroFanart(s) {
-  if (s.fanart || !s.ids || !s.ids.simkl) return s.fanart;
+// the sync lists often omit fanart and details; fetch them for the hero (public endpoint)
+async function heroDetail(s) {
+  if (!s.ids || !s.ids.simkl) return {};
   const type = s.kind === "movie" ? "movies" : s.kind === "anime" ? "anime" : "tv";
   try {
     const r = new Request(API + "/" + type + "/" + s.ids.simkl + "?extended=full&client_id=" + CLIENT_ID);
     r.timeoutInterval = 12;
-    const d = await r.loadJSON();
-    return d && d.fanart ? d.fanart : null;
-  } catch (e) { return null; }
+    const d = await r.loadJSON() || {};
+    const rating = d.ratings && d.ratings.simkl && d.ratings.simkl.rating;
+    return { fanart: s.fanart || d.fanart || null, overview: d.overview || "", genres: d.genres || [], rating: rating || null,
+      tmdb: (s.ids && s.ids.tmdb) || (d.ids && d.ids.tmdb) || null };
+  } catch (e) { return { fanart: s.fanart || null }; }
 }
+
+// TMDB: official title logo + a textless backdrop
+async function tmdbArt(s, tmdbId) {
+  if (!TMDB_KEY) return {};
+  const type = s.kind === "movie" ? "movie" : "tv";
+  try {
+    let id = tmdbId || (s.ids && s.ids.tmdb);
+    if (!id) {
+      const q = new Request("https://api.themoviedb.org/3/search/" + type + "?api_key=" + TMDB_KEY + "&query=" + encodeURIComponent(s.title) + (s.year ? (type === "movie" ? "&year=" : "&first_air_date_year=") + s.year : ""));
+      q.timeoutInterval = 12;
+      const j = await q.loadJSON(); id = j.results && j.results[0] && j.results[0].id;
+    }
+    if (!id) return {};
+    const r = new Request("https://api.themoviedb.org/3/" + type + "/" + id + "/images?api_key=" + TMDB_KEY + "&include_image_language=en,null");
+    r.timeoutInterval = 12;
+    const j = await r.loadJSON();
+    const byVote = (a, b) => (b.vote_average || 0) - (a.vote_average || 0);
+    const logos = (j.logos || []).filter((l) => l.file_path && !/\.svg$/i.test(l.file_path)).sort(byVote);
+    let bds = (j.backdrops || []).filter((b) => !b.iso_639_1); if (!bds.length) bds = j.backdrops || [];
+    bds.sort(byVote);
+    return { logo: logos[0] ? logos[0].file_path : null, backdrop: bds[0] ? bds[0].file_path : null };
+  } catch (e) { return {}; }
+}
+const tmdbImg = (size, path) => path ? "https://image.tmdb.org/t/p/" + size + path : null;
 
 // ---------- helpers ----------
 const col = (hex, a) => new Color(hex, a == null ? 1 : a);
@@ -242,8 +271,8 @@ function metaLine(hero) {
 }
 
 // "▶ Resume" pill (whole widget taps through to it): icon + label centred as one group
-function drawPill(ctx, hero, x, y) {
-  const label = hero.finished ? "Watch again" : "Resume";
+function drawPill(ctx, hero, x, y, labelOverride) {
+  const label = labelOverride || (hero.finished ? "Watch again" : "Resume");
   const PFS = 11, PILL_H = 28, ICON_W = 8, GAP_I = 7, PAD_X = 15;
   const labelW = Math.ceil(textWidth(label, PFS) * 1.08);      // a little slack: estimates run short
   const pillW = PAD_X + ICON_W + GAP_I + labelW + PAD_X, midY = y + PILL_H / 2;
@@ -352,7 +381,7 @@ function drawLarge(hero, rows, updated) {
   return ctx.getImage();
 }
 
-// ---------- EXTRA LARGE ~730 × 358 (wide; Mac desktop / iPad) — film strip ----------
+// ---------- EXTRA LARGE ~730 × 358 (wide; Mac desktop / iPad) — TV-app style ----------
 const XW = 730, XH = 358, XPAD = 28;
 const DISPLAY = "Futura-CondensedExtraBold";        // poster type (built into iOS)
 const display = (size) => new Font(DISPLAY, size);
@@ -398,109 +427,122 @@ function outlinePill(ctx, label, x, y) {
   return w;
 }
 
+function wrapLines(text, fs, maxW, maxLines) {
+  const words = (text || "").split(/\s+/).filter(Boolean), lines = [];
+  let cur = "", i = 0;
+  for (; i < words.length; i++) {
+    const t = cur ? cur + " " + words[i] : words[i];
+    if (textWidth(t, fs) <= maxW) { cur = t; continue; }
+    lines.push(cur); cur = words[i];
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && cur) { lines.push(cur); i = words.length; }
+  if (i < words.length) lines[lines.length - 1] = fitLine(lines[lines.length - 1] + " " + words.slice(i).join(" "), fs, maxW);
+  return lines;
+}
+
 function drawXL(hero, rows, updated) {
   const ctx = newCtx(XW, XH);
   ctx.opaque = true;
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, XW, XH));
-  const STRIP_Y = 212;
+  const PANEL_X = 468;
 
-  // the backdrop is the hero: full bleed, drawn straight in (the canvas edge crops it)
+  // full-bleed scene, drawn straight in (the canvas edge crops it)
   if (hero.backdrop) {
-    const b = hero.backdrop, sc = Math.max(XW / b.size.width, STRIP_Y / b.size.height), dw = b.size.width * sc, dh = b.size.height * sc;
-    ctx.drawImageInRect(b, new Rect((XW - dw) / 2, (STRIP_Y - dh) * (hero.fanartReal ? 0.55 : 0.35), dw, dh));
-    ctx.setFillColor(col(BG, 0.28)); ctx.fillRect(new Rect(0, 0, XW, STRIP_Y));
-    eased(ctx, 0, 0, 520, STRIP_Y, "h", 0.95, 0);
-    eased(ctx, 0, 120, XW, STRIP_Y - 120, "v", 0, 0.75);
+    const b = hero.backdrop, sc = Math.max(XW / b.size.width, XH / b.size.height), dw = b.size.width * sc, dh = b.size.height * sc;
+    ctx.drawImageInRect(b, new Rect((XW - dw) * 0.65, (XH - dh) * (hero.fanartReal ? 0.45 : 0.3), dw, dh));
+    ctx.setFillColor(col(BG, 0.18)); ctx.fillRect(new Rect(0, 0, XW, XH));
+    eased(ctx, 0, 0, PANEL_X, XH, "h", 0.9, 0.05);
+    eased(ctx, 0, 150, PANEL_X, XH - 150, "v", 0, 0.75);
   }
-  screentone(ctx, 420, 0, 310, 120, XW, 0, 260, 2.2, white(0.07));
 
-  const TX = XPAD, TW = 470;
-  // kicker
-  const typ = hero.kind === "movie" ? "MOVIE" : hero.kind === "anime" ? "ANIME" : "TV SERIES";
-  const kick = (hero.finished ? (hero.kind === "movie" ? "JUST WATCHED" : "JUST FINISHED") : "NOW WATCHING") + "   ·   " + typ;
+  // ---- left: the show ----
+  const TX = XPAD, TW = PANEL_X - XPAD - 40;
+  const typ = hero.kind === "movie" ? "MOVIE" : hero.kind === "anime" ? "ANIME" : "SERIES";
   let kx = TX;
   if (!hero.finished) { dot(ctx, TX + 3.5, 28, 3.5, col(ACCENT)); kx = TX + 12; }
-  ctx.setFont(Font.boldSystemFont(9)); ctx.setTextColor(white(0.75)); ctx.setTextAlignedLeft();
-  ctx.drawText(track(kick), new Point(kx, 22.5));
+  ctx.setFont(Font.boldSystemFont(9)); ctx.setTextColor(white(0.8)); ctx.setTextAlignedLeft();
+  ctx.drawText(track(hero.finished ? (hero.kind === "movie" ? "JUST WATCHED" : "JUST FINISHED") : "NOW WATCHING"), new Point(kx, 22.5));
 
-  // title in poster type
-  const lay = condLayout(hero.title.toUpperCase(), TW, [58, 52, 46, 40, 34]);
-  let y = 36;
-  ctx.setFont(display(lay.fs)); ctx.setTextColor(white(1));
-  for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX - 1, y)); y += lay.fs * 1.0; }
-  const meta = [hero.year, hero.kind === "movie" ? (hero.runtime ? hero.runtime + " min" : null) : hero.total ? hero.total + " episodes" : null,
-    hero.kind !== "movie" && hero.runtime ? hero.runtime + " min each" : null].filter(Boolean).join("   ·   ");
-  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.65));
-  ctx.drawText(fitLine(meta, 11, TW), new Point(TX, y + 3));
+  // official logo (bottom-aligned in its box), else the title in poster type
+  const LOGO_BOTTOM = 154, LOGO_MAXW = 330, LOGO_MAXH = 104;
+  if (hero.logo) {
+    const lw = hero.logo.size.width, lh = hero.logo.size.height, sc = Math.min(LOGO_MAXW / lw, LOGO_MAXH / lh);
+    ctx.drawImageInRect(hero.logo, new Rect(TX, LOGO_BOTTOM - lh * sc, lw * sc, lh * sc));
+  } else {
+    const lay = condLayout(hero.title.toUpperCase(), TW, [60, 54, 48, 42, 36]);
+    const lh = lay.fs * 1.0;
+    let y = LOGO_BOTTOM - lh * lay.lines.length - 4;
+    ctx.setFont(display(lay.fs)); ctx.setTextColor(white(1));
+    for (const ln of lay.lines) { ctx.drawText(ln, new Point(TX - 1, y)); y += lh; }
+  }
 
-  // progress: numbered ticks for shows, a line for movies
-  const PRY = Math.max(118, y + 22), n = hero.total, p = pct(hero);
-  const hasTicks = hero.kind !== "movie" && n && n <= 30, hasNums = hasTicks && n <= 24;
-  if (hasTicks) {
-    const lit = hero.finished ? n : Math.min(n, hero.watched || 0), gap = n > 20 ? 2.5 : 4, tw = (TW - gap * (n - 1)) / n;
+  // meta: type · year · length · rating · genres
+  const metaBits = [typ, hero.year,
+    hero.kind === "movie" ? (hero.runtime ? Math.floor(hero.runtime / 60) + "h " + (hero.runtime % 60) + "m" : null) : hero.total ? hero.total + " episodes" : null,
+    hero.rating ? "★ " + Number(hero.rating).toFixed(1) : null,
+    (hero.genres || []).slice(0, 2).join(", ") || null].filter(Boolean);
+  ctx.setFont(Font.semiboldSystemFont(10.5)); ctx.setTextColor(white(0.75));
+  ctx.drawText(fitLine(metaBits.join("   ·   "), 10.5, TW), new Point(TX, LOGO_BOTTOM + 12));
+
+  // synopsis, two lines
+  if (hero.overview) {
+    ctx.setFont(Font.regularSystemFont ? Font.regularSystemFont(10.5) : Font.systemFont(10.5)); ctx.setTextColor(white(0.6));
+    wrapLines(hero.overview, 10.5, TW, 2).forEach((ln, i) => ctx.drawText(ln, new Point(TX, LOGO_BOTTOM + 31 + i * 14)));
+  }
+
+  // progress: slim episode segments (or a line) + % on the right
+  const PY = 244, n = hero.total, p = pct(hero), BARW = TW - 54;
+  if (hero.kind !== "movie" && n && n <= 30) {
+    const lit = hero.finished ? n : Math.min(n, hero.watched || 0), gap = 3, tw = (BARW - gap * (n - 1)) / n;
     for (let i = 0; i < n; i++) {
       const x = TX + i * (tw + gap);
-      if (i === lit && !hero.finished) strokeRounded(ctx, x + 0.75, PRY + 0.75, tw - 1.5, 9.5, 2.5, col(ACCENT), 1.5);
-      else rounded(ctx, x, PRY, tw, 11, 2.8, white(i < lit ? 1 : 0.16));
-      if (hasNums) {
-        ctx.setTextAlignedCenter(); ctx.setFont(Font.boldSystemFont(7.5));
-        ctx.setTextColor(i === lit && !hero.finished ? col(ACCENT) : white(i < lit ? 0.6 : 0.3));
-        ctx.drawTextInRect(String(i + 1), new Rect(x, PRY + 15, tw, 10)); ctx.setTextAlignedLeft();
-      }
+      if (i === lit && !hero.finished) rounded(ctx, x, PY, tw, 5, 2.5, col(ACCENT));
+      else rounded(ctx, x, PY, tw, 5, 2.5, white(i < lit ? 0.95 : 0.2));
     }
   } else {
-    rounded(ctx, TX, PRY + 2, TW, 6, 3, white(0.16));
-    if (p > 0) rounded(ctx, TX, PRY + 2, Math.max(6, TW * p), 6, 3, white(1));
+    rounded(ctx, TX, PY, BARW, 5, 2.5, white(0.2));
+    if (p > 0) rounded(ctx, TX, PY, Math.max(5, BARW * p), 5, 2.5, white(0.95));
   }
+  ctx.setTextAlignedRight(); ctx.setFont(display(17)); ctx.setTextColor(white(1));
+  ctx.drawTextInRect(hero.finished ? "✓" : Math.round(p * 100) + "%", new Rect(TX + TW - 50, PY - 7, 50, 20)); ctx.setTextAlignedLeft();
   const cap = [hero.finished ? (hero.kind === "movie" ? "Watched" : "Series completed") : sub(hero), ago(hero.last)].filter(Boolean).join("   ·   ");
-  ctx.setFont(Font.semiboldSystemFont(11)); ctx.setTextColor(white(0.75));
-  ctx.drawText(fitLine(cap, 11, TW), new Point(TX, PRY + (hasNums ? 29 : 16)));
+  ctx.setFont(Font.semiboldSystemFont(10)); ctx.setTextColor(white(0.6));
+  ctx.drawText(fitLine(cap, 10, TW), new Point(TX, PY + 12));
 
   // buttons
-  const BY = STRIP_Y - 40;
-  const pw = drawPill(ctx, hero, TX, BY);
+  const BY = XH - 26 - 28;
+  const resumeLabel = hero.finished ? "Watch again" : hero.next ? "Resume  " + hero.next.replace(/^S(\d+)E(\d+)$/, "S$1 E$2") : "Resume";
+  const pw = drawPill(ctx, hero, TX, BY, resumeLabel);
   outlinePill(ctx, "Open in Simkl", TX + pw + 10, BY);
 
-  // giant number on the right: % watched, or ✓ for something finished
-  const big = hero.finished ? "✓" : Math.round(p * 100) + "%";
-  ctx.setTextAlignedRight(); ctx.setFont(display(96)); ctx.setTextColor(white(1));
-  ctx.drawTextInRect(big, new Rect(XW - XPAD - 240, 18, 240, 110));
-  ctx.setFont(Font.heavySystemFont(9)); ctx.setTextColor(col(ACCENT));
-  ctx.drawTextInRect(track(hero.finished ? (hero.kind === "movie" ? "WATCHED" : "COMPLETE") : "WATCHED SO FAR"), new Rect(XW - XPAD - 240, 128, 240, 12));
-  ctx.setTextAlignedLeft();
-
-  // ---- film strip: the recently watched, as frames on a reel ----
-  ctx.setFillColor(col("#050506")); ctx.fillRect(new Rect(0, STRIP_Y, XW, XH - STRIP_Y));
-  const HOLE_W = 9, HOLE_H = 6, HOLE_GAP = 9;
-  for (const hy of [STRIP_Y + 7, XH - 13]) for (let hx = 6; hx < XW - 6; hx += HOLE_W + HOLE_GAP) rounded(ctx, hx, hy, HOLE_W, HOLE_H, 1.5, white(0.13));
-  // edge markings, like printed film stock
-  ctx.setFont(Font.boldSystemFont(6.5)); ctx.setTextColor(col(ACCENT, 0.85));
-  ctx.drawText(track("RECENTLY WATCHED"), new Point(XPAD, STRIP_Y + 18));
-  ctx.setTextAlignedRight(); ctx.setTextColor(white(0.35));
-  ctx.drawTextInRect(track("SIMKL  ·  " + updated), new Rect(XW - XPAD - 200, STRIP_Y + 18, 200, 9)); ctx.setTextAlignedLeft();
-
-  const FY = STRIP_Y + 32, FH = XH - 22 - FY, UNIT = (XW - XPAD * 2) / 4;
+  // ---- right: glass panel, recently watched ----
+  ctx.setFillColor(col("#08070a", 0.72)); ctx.fillRect(new Rect(PANEL_X, 0, XW - PANEL_X, XH));
+  ctx.setFillColor(white(0.08)); ctx.fillRect(new Rect(PANEL_X, 0, 1, XH));
+  const PX = PANEL_X + 18, PW = XW - PX - 18;
+  ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(white(0.55));
+  ctx.drawText(track("RECENTLY WATCHED"), new Point(PX, 22));
+  const RY0 = 42, RH = 64, RG = 8, TH = 56, TWD = Math.round(TH * 16 / 9);
   rows.slice(0, 4).forEach((s, i) => {
-    const ux = XPAD + i * UNIT, fw = Math.round(FH * 2 / 3);
-    if (s.img) ctx.drawImageInRect(cover(s.img, fw, FH, 0, 0.3), new Rect(ux, FY, fw, FH));
-    else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(ux, FY, fw, FH)); }
-    ctx.setStrokeColor(white(0.18)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(ux + 0.5, FY + 0.5, fw - 1, FH - 1));
-    const x2 = ux + fw + 10, w2 = UNIT - fw - 22;
-    // frame number, film style
-    ctx.setFont(Font.heavySystemFont(7.5)); ctx.setTextColor(white(0.35));
-    ctx.drawText(track(String(i + 1).padStart(2, "0") + (s.finished ? "  ✓" : "")), new Point(x2, FY + 1));
-    const ct = s.title.toUpperCase();
-    let cfs = 16; while (cfs > 12 && condW(ct, cfs) > w2) cfs -= 0.5;
-    ctx.setFont(display(cfs)); ctx.setTextColor(white(1));
-    ctx.drawText(fitCond(ct, cfs, w2), new Point(x2, FY + 13));
-    const line1 = s.kind === "movie" ? (s.finished ? "Watched" : Math.round(pct(s) * 100) + "% watched") : sub(s);
-    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.7));
-    ctx.drawText(fitLine(line1, 9.5, w2), new Point(x2, FY + 35));
-    ctx.setTextColor(white(0.42));
-    ctx.drawText(fitLine(ago(s.last), 9.5, w2), new Point(x2, FY + 48));
-    rounded(ctx, x2, FY + FH - 4, w2, 3, 1.5, white(0.14));
-    rounded(ctx, x2, FY + FH - 4, Math.max(3, w2 * pct(s)), 3, 1.5, s.finished ? white(0.45) : col(ACCENT));
+    const ry = RY0 + i * (RH + RG);
+    // landscape still (hard edges), progress along its bottom edge
+    if (s.still) ctx.drawImageInRect(cover(s.still, TWD, TH, 0, 0.4), new Rect(PX, ry + 4, TWD, TH));
+    else if (s.img) ctx.drawImageInRect(cover(s.img, TWD, TH, 0, 0.25), new Rect(PX, ry + 4, TWD, TH));
+    else { ctx.setFillColor(col("#2a2630")); ctx.fillRect(new Rect(PX, ry + 4, TWD, TH)); }
+    ctx.setStrokeColor(white(0.14)); ctx.setLineWidth(1); ctx.strokeRect(new Rect(PX + 0.5, ry + 4.5, TWD - 1, TH - 1));
+    ctx.setFillColor(col("#000000", 0.55)); ctx.fillRect(new Rect(PX, ry + 4 + TH - 3, TWD, 3));
+    ctx.setFillColor(s.finished ? white(0.85) : col(ACCENT)); ctx.fillRect(new Rect(PX, ry + 4 + TH - 3, Math.max(3, TWD * pct(s)), 3));
+    const x2 = PX + TWD + 12, w2 = PX + PW - x2;
+    ctx.setFont(Font.boldSystemFont(11.5)); ctx.setTextColor(white(1));
+    ctx.drawText(fitLine(s.title, 11.5, w2), new Point(x2, ry + 7));
+    const line1 = s.kind === "movie" ? (s.finished ? "Movie  ·  watched" : Math.round(pct(s) * 100) + "% watched") : sub(s);
+    ctx.setFont(Font.semiboldSystemFont(9.5)); ctx.setTextColor(white(0.65));
+    ctx.drawText(fitLine(line1, 9.5, w2), new Point(x2, ry + 25));
+    ctx.setTextColor(white(0.4));
+    ctx.drawText(fitLine(ago(s.last), 9.5, w2), new Point(x2, ry + 39));
   });
+  ctx.setFont(Font.semiboldSystemFont(8)); ctx.setTextColor(white(0.3)); ctx.setTextAlignedRight();
+  ctx.drawTextInRect(track("SIMKL  ·  " + updated), new Rect(PX, XH - 18, PW, 10)); ctx.setTextAlignedLeft();
   return ctx.getImage();
 }
 function fitCond(t, fs, maxW) {
@@ -540,12 +582,25 @@ if (!token) {
   } else {
     const [hero, ...rest] = items;
     const rows = rest.slice(0, 4);
-    const fan = await heroFanart(hero);
-    const loads = [loadImage(posterUrl(hero.poster)), loadImage(fan ? fanartUrl(fan) : blurPosterUrl(hero.poster)),
-      ...rows.map((s) => loadImage(posterUrl(s.poster)))];
-    const imgs = await Promise.all(loads);
-    hero.img = imgs[0]; hero.backdrop = imgs[1]; hero.fanartReal = !!fan;
-    rows.forEach((s, i) => { s.img = imgs[2 + i]; });
+    const det = await heroDetail(hero);
+    Object.assign(hero, { overview: det.overview, genres: det.genres, rating: det.rating });
+    const fan = det.fanart;
+    if (WIDE) {
+      // TMDB art for the hero and each row, all in parallel
+      const [art, ...rowArt] = await Promise.all([tmdbArt(hero, det.tmdb), ...rows.map((s) => tmdbArt(s))]);
+      const imgs = await Promise.all([
+        loadImage(art.backdrop ? tmdbImg("w1280", art.backdrop) : fan ? fanartUrl(fan) : blurPosterUrl(hero.poster)),
+        loadImage(tmdbImg("w500", art.logo)),
+        ...rows.map((s, i) => rowArt[i].backdrop ? loadImage(tmdbImg("w300", rowArt[i].backdrop)) : loadImage(posterUrl(s.poster))),
+      ]);
+      hero.backdrop = imgs[0]; hero.logo = imgs[1]; hero.fanartReal = !!(art.backdrop || fan);
+      rows.forEach((s, i) => { if (rowArt[i].backdrop) s.still = imgs[2 + i]; else s.img = imgs[2 + i]; });
+    } else {
+      const imgs = await Promise.all([loadImage(posterUrl(hero.poster)), loadImage(fan ? fanartUrl(fan) : blurPosterUrl(hero.poster)),
+        ...rows.map((s) => loadImage(posterUrl(s.poster)))]);
+      hero.img = imgs[0]; hero.backdrop = imgs[1]; hero.fanartReal = !!fan;
+      rows.forEach((s, i) => { s.img = imgs[2 + i]; });
+    }
     const df = new DateFormatter(); df.useNoDateStyle(); df.useShortTimeStyle();
     widget = new ListWidget();
     widget.setPadding(0, 0, 0, 0);
