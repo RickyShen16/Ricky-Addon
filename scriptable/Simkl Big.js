@@ -50,7 +50,14 @@ async function getJSON(path, auth) {
   r.headers = Object.assign({ "Content-Type": "application/json", "simkl-api-key": CLIENT_ID },
     auth ? { "Authorization": "Bearer " + token } : {});
   r.timeoutInterval = 20;
-  return await r.loadJSON();
+  const j = await r.loadJSON();
+  // Simkl answers problems with {"error": ..., "code": ...}; don't mistake that for "no data"
+  if (j && !Array.isArray(j) && j.error) {
+    const e = new Error("Simkl: " + j.error);
+    e.auth = j.code === 401 || /token|unauthori|auth/i.test(String(j.error));
+    throw e;
+  }
+  return j;
 }
 async function loadImage(url) {
   if (!url) return null;
@@ -70,12 +77,15 @@ function nextLabel(ne, kind, watched) {
 }
 
 async function loadItems() {
-  const g = (p, fb) => getJSON(p, true).catch(() => fb);
+  const errs = [];
+  const g = (p, fb) => getJSON(p, true).catch((e) => { errs.push(e); return fb; });
   const [sw, sd, aw, ad, md, pb] = await Promise.all([
     g("/sync/all-items/shows/watching?extended=full", {}), g("/sync/all-items/shows/completed?extended=full", {}),
     g("/sync/all-items/anime/watching?extended=full", {}), g("/sync/all-items/anime/completed?extended=full", {}),
     g("/sync/all-items/movies/completed?extended=full", {}), g("/sync/playback/movies?extended=full", []),
   ]);
+  if (errs.some((e) => e.auth)) { const e = new Error("login rejected"); e.auth = true; throw e; }
+  if (errs.length === 6) throw errs[0];          // every call failed: offline or Simkl down
   const out = [];
   const add = (obj, kind, finished) => {
     for (const it of (obj && (obj.shows || obj.anime || obj.movies)) || []) {
@@ -137,6 +147,16 @@ async function tmdbArt(s, tmdbId) {
   } catch (e) { return {}; }
 }
 const tmdbImg = (size, path) => path ? "https://image.tmdb.org/t/p/" + size + path : null;
+
+// last good list, so a hiccup (offline, Simkl busy) shows old data instead of an empty widget
+const CACHE_FILE = "simkl-big-cache.json";
+function cachePath() { const f = FileManager.local(); return f.joinPath(f.documentsDirectory(), CACHE_FILE); }
+function saveCache(items) {
+  try { FileManager.local().writeString(cachePath(), JSON.stringify(items.slice(0, 8).map((x) => Object.assign({}, x, { img: null, still: null, backdrop: null, logo: null })))); } catch (e) {}
+}
+function readCache() {
+  try { const f = FileManager.local(); return f.fileExists(cachePath()) ? JSON.parse(f.readString(cachePath())) : []; } catch (e) { return []; }
+}
 
 // ---------- helpers ----------
 const col = (hex, a) => new Color(hex, a == null ? 1 : a);
@@ -576,10 +596,17 @@ if (!token) {
   widget.url = "scriptable:///run/" + encodeURIComponent("Simkl Radar");
 } else {
   try {
-  let items = [];
-  try { items = await loadItems(); } catch (e) { items = []; }
-  if (!items.length) {
-    widget = message("Nothing yet", "Watch something on Simkl and it will show up here.");
+  let items = [], authFail = false, problem = null;
+  try { items = await loadItems(); } catch (e) { if (e.auth) authFail = true; else problem = e; }
+  if (items.length) saveCache(items);
+  else if (!authFail && problem) items = readCache();
+  if (authFail) {
+    widget = message("Simkl login expired", Device.isPhone()
+      ? "Simkl stopped accepting this login. Run \"Simkl Radar\" in Scriptable, choose Re-link account, then run \"Simkl Big\" once."
+      : "Simkl stopped accepting this login. On your iPhone: run \"Simkl Radar\" → Re-link account, then run \"Simkl Big\" once to share the new login with this Mac.");
+    widget.url = "scriptable:///run/" + encodeURIComponent("Simkl Radar");
+  } else if (!items.length) {
+    widget = message(problem ? "Can't reach Simkl" : "Nothing yet", problem ? String(problem.message).slice(0, 140) : "Watch something on Simkl and it will show up here.");
   } else {
     const [hero, ...rest] = items;
     const rows = rest.slice(0, 4);
