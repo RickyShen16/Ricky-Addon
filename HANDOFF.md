@@ -32,6 +32,15 @@ cd ~/Downloads && rm -rf Ricky-Addon-claude-simkl-radar-widget-cvmugs simkl.zip 
 - Notification Center: no code — macOS "Use iPhone widgets" (Desktop & Dock → Widgets) mirrors the iPhone Scriptable widget.
 - Homebrew, Übersicht and SwiftBar are installed on the Mac.
 
+## Switching to Nuvio (Nov 2026)
+
+The user moved tracking from Simkl to **Nuvio**, using Nuvio's official public API (`docs/nuvio-api-notes.md`).
+- Done: `scriptable/Nuvio Up Next.js` (iPhone medium). Session lives in `nuvio-session.json`, written to Scriptable iCloud and local. Every Nuvio widget should reuse it.
+  Refresh tokens rotate, so always save the new one.
+- Next, one at a time with previews first: Mac extra large, then the lock-screen widgets.
+  Ideas the user liked: live "Now Playing" via tracking events on this repo's addon, and a stats card.
+- Preview: render with the browser shim (scratchpad `nv/run.mjs` pattern), using Nuvio fixtures and real TMDB.
+
 ## Open right now
 
 1. **Moving the desktop widget.** Dragging the bottom bar did not work in Übersicht (no hover/drag reached the widget).
