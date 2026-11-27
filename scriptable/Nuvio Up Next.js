@@ -23,6 +23,9 @@ const ACCENT = "#ff4b3e";
 // "split"   = big backdrop + official logo on the left, 3-title Up Next list on the right
 // "classic" = the old Simkl Radar look: round poster + ring, title, bar, Up Next list
 // "hero"    = one title, full backdrop (no list)
+// "slash"   = diagonal red cut through the backdrop; Up Next steps down the diagonal
+// "ticket"  = cinema ticket: backdrop body + torn stub with % and 3 mini posters
+// "shelf"   = logo + big % on top, a row of posters (current one highlighted) along the bottom
 const LAYOUT = "split";
 
 // Nuvio's official public API (nuvio.tv/docs). The publishable key is published there for third-party apps.
@@ -249,7 +252,7 @@ async function loadCard(s) {
   } else if (card.type === "series") {
     card.showSeason = card.season; card.showEpisode = card.finished ? card.episode + 1 : card.episode;
   }
-  if (card.tmdb && LAYOUT === "classic") {
+  if (card.tmdb && LAYOUT !== "hero" && LAYOUT !== "split") {
     const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images&include_image_language=en,null`);
     card.poster = d && d.poster_path ? tmdbImg("w342", d.poster_path) : null;
   }
@@ -613,6 +616,152 @@ async function drawClassic(c) {
   return ctx.getImage();
 }
 
+// ---------- extra layouts ----------
+const COND = (fs) => new Font("Futura-CondensedExtraBold", fs);
+function poly(ctx, pts, color) { const p = new Path(); p.move(new Point(pts[0][0], pts[0][1])); for (const q of pts.slice(1)) p.addLine(new Point(q[0], q[1])); p.closeSubpath(); ctx.addPath(p); ctx.setFillColor(color); ctx.fillPath(); }
+async function drawLogo(ctx, c, x, y, maxW, maxH, fallbackFs) {
+  const logo = await loadImage(c.logo);
+  if (logo) { const r = logo.size.width / logo.size.height; let lh = maxH, lw = lh * r; if (lw > maxW) { lw = maxW; lh = lw / r; } ctx.drawImageInRect(logo, new Rect(x, y + (maxH - lh) / 2, lw, lh)); return; }
+  const t = (c.title || "Untitled").toUpperCase(); const fs = estW(t, fallbackFs, 0.42) > maxW ? Math.round(fallbackFs * 0.75) : fallbackFs;
+  text(ctx, fit(t, fs, maxW, 0.42), x, y + (maxH - fs) / 2 - 2, maxW + 30, COND(fs), col("#ffffff"));
+}
+function subLine(c, info) {
+  if (c.type === "series") return info.ep + (c.epName ? `  ${c.epName}` : "");
+  return [c.year, c.runtime ? hm(c.runtime) : null, c.rating ? `★ ${c.rating}` : null].filter(Boolean).join("  ·  ");
+}
+const pctText = (c, info) => (info.upNext ? (info.notOut ? `IN ${info.d}D` : `E${c.showEpisode}`) : `${Math.round(info.pct * 100)}%`);
+const barPct = (c, info) => (info.upNext ? (c.seasonEpisodes ? Math.min(1, (c.seen || []).length / c.seasonEpisodes) : 0) : info.pct);
+const leftText = (c, info) => (info.upNext ? (info.notOut ? `E${c.showEpisode} airs soon` : `${(c.seen || []).length}${c.seasonEpisodes ? "/" + c.seasonEpisodes : ""} watched`) : info.left ? `${hm(info.left)} left` : "");
+
+// SLASH
+async function drawSlash(c) {
+  const ctx = new DrawContext(); ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
+  ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
+  const info = heroInfo(c);
+  const bd = await loadImage(c.backdrop);
+  if (bd) {
+    ctx.drawImageInRect(cropTo(bd, 236, H, 0.3), new Rect(0, 0, 236, H));
+    for (let x = 0; x < 236; x++) { const t = x / 236; ctx.setFillColor(col(BG, 0.88 - 0.6 * t)); ctx.fillRect(new Rect(x, 0, 1, H)); }
+    vfadeRect(ctx, 0, 236, 70, H, 0, 0.75);
+  }
+  const TX = 212, BX = 170;                     // diagonal: x at top / bottom
+  const edge = (y) => TX + (BX - TX) * (y / H);
+  poly(ctx, [[TX, 0], [W, 0], [W, H], [BX, H]], col("#0e0a0b"));
+  poly(ctx, [[TX - 4, 0], [TX + 1, 0], [BX + 1, H], [BX - 4, H]], col(ACCENT));
+  poly(ctx, [[TX + 7, 0], [TX + 8.5, 0], [BX + 8.5, H], [BX + 7, H]], col("#ffffff", 0.12));
+
+  const X = 14;
+  text(ctx, info.kick, X, 14, 170, Font.boldSystemFont(8.5), col(ACCENT));
+  await drawLogo(ctx, c, X, 30, 150, 38, 28);
+  text(ctx, fit(subLine(c, info), 10, 150, 0.55), X, 74, 190, Font.semiboldSystemFont(10), col("#ffffff", 0.85));
+  text(ctx, pctText(c, info), X, 96, 120, COND(34), col("#ffffff"));
+  text(ctx, leftText(c, info), X + 2, 134, 150, Font.mediumSystemFont(9), col("#ffffff", 0.6));
+  const BW = 140, bp = barPct(c, info); rrect(ctx, X, H - 12, BW, 3, 1.5, col("#ffffff", 0.18));
+  if (bp > 0) rrect(ctx, X, H - 12, Math.max(3, BW * bp), 3, 1.5, col(ACCENT));
+  if (!(c.rows && c.rows.length)) text(ctx, "Nothing else\nin progress", edge(40) + 16, 36, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35));
+
+  text(ctx, "UP NEXT", edge(14) + 16, 14, 80, Font.boldSystemFont(8.5), col("#ffffff", 0.45));
+  await loadRowImages(c.rows);
+  (c.rows || []).slice(0, 3).forEach((r, i) => {
+    const y = 32 + i * 41, x = edge(y + 16) + 16, w = W - x - 12;
+    if (r._img) ctx.drawImageInRect(cropTo(r._img, 23, 34, 0.2), new Rect(x, y, 23, 34)); else rrect(ctx, x, y, 23, 34, 2, col("#ffffff", 0.08));
+    const tx = x + 30, tw = w - 30;
+    text(ctx, fit(r.title, 10.5, tw, 0.58), tx, y, tw + 30, Font.boldSystemFont(10.5), col("#ffffff"));
+    text(ctx, fit(r.line, 8, tw + 4, 0.5), tx, y + 14, tw + 30, Font.mediumSystemFont(8), col("#ffffff", 0.55));
+    rrect(ctx, tx, y + 30, tw, 2.5, 1.25, col("#ffffff", 0.14));
+    if (r.pct > 0) rrect(ctx, tx, y + 30, Math.max(3, tw * r.pct), 2.5, 1.25, r.pct >= 1 ? col("#ffffff", 0.7) : col(ACCENT));
+  });
+  return ctx.getImage();
+}
+
+// TICKET
+async function drawTicket(c) {
+  const ctx = new DrawContext(); ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
+  const DARK = "#050304"; ctx.setFillColor(col(DARK)); ctx.fillRect(new Rect(0, 0, W, H));
+  const info = heroInfo(c), SX = 228;           // stub starts here
+  const bd = await loadImage(c.backdrop);
+  ctx.setFillColor(col("#140d0f")); ctx.fillRect(new Rect(0, 0, SX, H));
+  if (bd) {
+    ctx.drawImageInRect(cropTo(bd, SX, H, 0.3), new Rect(0, 0, SX, H));
+    for (let x = 0; x < SX; x++) { const t = x / SX; ctx.setFillColor(col("#140d0f", 0.9 - 0.5 * t)); ctx.fillRect(new Rect(x, 0, 1, H)); }
+    vfadeRect(ctx, 0, SX, 80, H, 0, 0.7);
+  }
+  // stub
+  ctx.setFillColor(col("#1b1214")); ctx.fillRect(new Rect(SX, 0, W - SX, H));
+  // notches + perforation
+  for (const ny of [0, H]) { const p = new Path(); p.addEllipse(new Rect(SX - 9, ny - 9, 18, 18)); ctx.addPath(p); ctx.setFillColor(col(DARK)); ctx.fillPath(); }
+  for (let y = 14; y < H - 12; y += 7) rrect(ctx, SX - 1, y, 2, 3.5, 1, col("#ffffff", 0.22));
+
+  const X = 14;
+  text(ctx, "NUVIO  ·  " + info.kick, X, 14, 200, Font.boldSystemFont(8.5), col("#ffffff", 0.7));
+  await drawLogo(ctx, c, X, 32, 170, 40, 30);
+  text(ctx, fit(subLine(c, info), 10, 196, 0.55), X, 80, 210, Font.semiboldSystemFont(10), col("#ffffff", 0.88));
+  // barcode-ish progress: thin bars, filled up to %
+  const BX0 = X, BW = 196, n = 49, done = info.upNext ? 1 : info.pct;
+  for (let i = 0; i < n; i++) {
+    const h = [14, 10, 14, 7, 14, 11][i % 6], x = BX0 + i * (BW / n);
+    rrect(ctx, x, H - 16 - h, 2, h, 0.6, i / n < done ? col(ACCENT) : col("#ffffff", 0.2));
+  }
+  text(ctx, leftText(c, info), X, H - 44, 200, Font.mediumSystemFont(9), col("#ffffff", 0.6));
+
+  // stub content
+  const RX = SX + 12, RW = W - RX - 10;
+  text(ctx, "ADMIT ONE", RX, 14, RW + 20, Font.boldSystemFont(8), col(ACCENT));
+  text(ctx, pctText(c, info), RX - 1, 26, RW + 20, COND(30), col("#ffffff"));
+  text(ctx, info.upNext ? info.ep.replace(" · ", "") : c.type === "movie" ? "MOVIE" : info.ep.replace(" · ", " "), RX, 64, RW + 20, Font.boldSystemFont(8.5), col("#ffffff", 0.55));
+  await loadRowImages(c.rows);
+  const rows = (c.rows || []).slice(0, 3), pw = 24, gap = (RW - pw * 3) / 2;
+  rows.forEach((r, i) => {
+    const x = RX + i * (pw + gap), y = 92;
+    if (r._img) ctx.drawImageInRect(cropTo(r._img, pw, 36, 0.2), new Rect(x, y, pw, 36)); else rrect(ctx, x, y, pw, 36, 2, col("#ffffff", 0.08));
+    rrect(ctx, x, y + 40, pw, 2.5, 1.25, col("#ffffff", 0.15));
+    if (r.pct > 0) rrect(ctx, x, y + 40, Math.max(2.5, pw * r.pct), 2.5, 1.25, r.pct >= 1 ? col("#ffffff", 0.7) : col(ACCENT));
+  });
+  if (rows.length) text(ctx, "UP NEXT", RX, 80, RW + 20, Font.boldSystemFont(7), col("#ffffff", 0.4));
+  return ctx.getImage();
+}
+
+// SHELF
+async function drawShelf(c) {
+  const ctx = new DrawContext(); ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
+  ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
+  const info = heroInfo(c);
+  const bd = await loadImage(c.backdrop);
+  if (bd) {
+    ctx.drawImageInRect(cropTo(bd, W, H, 0.25), new Rect(0, 0, W, H));
+    ctx.setFillColor(col(BG, 0.62)); ctx.fillRect(new Rect(0, 0, W, H));
+    for (let x = 0; x < W; x++) { const t = x / W; ctx.setFillColor(col(BG, 0.55 * (1 - t))); ctx.fillRect(new Rect(x, 0, 1, H)); }
+    vfadeRect(ctx, 0, W, 50, H, 0, 0.92);
+  }
+  const X = 14;
+  text(ctx, info.kick, X, 12, 200, Font.boldSystemFont(8.5), col("#ffffff", 0.75));
+  await drawLogo(ctx, c, X, 25, 150, 30, 24);
+  text(ctx, pctText(c, info), W - 14 - 110, 6, 110, COND(36), col("#ffffff"), "right");
+  text(ctx, leftText(c, info), W - 14 - 150, 48, 150, Font.mediumSystemFont(8.5), col("#ffffff", 0.65), "right");
+
+  // shelf: current item as a wide still + 3 posters
+  const Y = 72, PH = 58;
+  const cw = 104, still = await loadImage(c.backdrop);
+  if (still) ctx.drawImageInRect(cropTo(still, cw, PH, 0.3), new Rect(X, Y, cw, PH));
+  ctx.setStrokeColor(col(ACCENT)); ctx.setLineWidth(1.5); ctx.strokeRect(new Rect(X, Y, cw, PH));
+  ctx.setFillColor(col("#000000", 0.35)); ctx.fillRect(new Rect(X, Y + PH - 16, cw, 16));
+  text(ctx, c.type === "movie" ? "MOVIE" : info.ep.replace(" · ", " "), X + 6, Y + PH - 14, cw, Font.boldSystemFont(8.5), col("#ffffff"));
+  rrect(ctx, X, Y + PH + 5, cw, 3, 1.5, col("#ffffff", 0.18));
+  const cp = info.upNext ? 1 : info.pct; if (cp > 0) rrect(ctx, X, Y + PH + 5, Math.max(3, cw * cp), 3, 1.5, col(ACCENT));
+
+  await loadRowImages(c.rows);
+  const rows = (c.rows || []).slice(0, 3), pw = 39, gap = 10;
+  rows.forEach((r, i) => {
+    const x = X + cw + 14 + i * (pw + gap);
+    if (r._img) ctx.drawImageInRect(cropTo(r._img, pw, PH, 0.2), new Rect(x, Y, pw, PH)); else rrect(ctx, x, Y, pw, PH, 2, col("#ffffff", 0.08));
+    rrect(ctx, x, Y + PH + 5, pw, 3, 1.5, col("#ffffff", 0.18));
+    if (r.pct > 0) rrect(ctx, x, Y + PH + 5, Math.max(3, pw * r.pct), 3, 1.5, r.pct >= 1 ? col("#ffffff", 0.7) : col(ACCENT));
+    const lab = r.type === "movie" ? r.line.replace(" left", "").replace(/(\d+)h (\d+)m/, "$1h$2m") : r.line.split(" · ")[0];
+    text(ctx, fit(lab, 7.5, pw + 6, 0.56), x, Y + PH + 11, pw + 30, Font.semiboldSystemFont(7.5), col("#ffffff", 0.55));
+  });
+  return ctx.getImage();
+}
+
 function messageCard(title, body) {
   const ctx = new DrawContext();
   ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
@@ -655,7 +804,9 @@ async function buildWidget() {
   try {
     if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
     else {
-      const draw = LAYOUT === "classic" ? drawClassic : LAYOUT === "split" && card.rows && card.rows.length ? drawSplit : drawCard;
+      const hasRows = card.rows && card.rows.length;
+      const draw = LAYOUT === "classic" ? drawClassic : LAYOUT === "slash" ? drawSlash : LAYOUT === "ticket" ? drawTicket
+        : LAYOUT === "shelf" ? drawShelf : LAYOUT === "split" && hasRows ? drawSplit : drawCard;
       w.backgroundImage = await draw(card); w.url = deepLink(card);
     }
   } catch (e) {
