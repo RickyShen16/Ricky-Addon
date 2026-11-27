@@ -418,7 +418,7 @@ async function buildWidget() {
     if (e.auth) problem = [e.none ? "Sign in to Nuvio" : "Nuvio login expired", "Tap to open Scriptable and sign in."];
     else if (e.offline) { card = readLocal(CACHE_FILE); if (!card) problem = ["Can't reach Nuvio", String(e.message).slice(0, 120)]; }
     else problem = ["Nuvio problem", String(e.message || e).slice(0, 120)];
-    if (e.auth) w.url = `scriptable:///run/${encodeURIComponent(SCRIPT_NAME)}`;
+    if (e.auth) w.url = `scriptable:///run/${encodeURIComponent(Script.name() || SCRIPT_NAME)}`;
   }
   try {
     if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
@@ -443,7 +443,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v4)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v5)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -461,29 +461,63 @@ async function chooseProfile(s) {
   s.profile = p.profile_index; s.profileName = p.name;
 }
 
+// Sign-in page. (Scriptable's pop-up text fields return nothing on recent iOS, so this uses a
+// small web form instead. It also lets iOS Passwords autofill your Nuvio login.)
+const LOGIN_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<style>
+ :root{color-scheme:dark} *{box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif}
+ body{margin:0;min-height:100vh;background:radial-gradient(120% 60% at 80% 0%,#3a0d0b 0%,#0b0809 60%);color:#fff;display:flex;align-items:center;justify-content:center;padding:28px}
+ .card{width:100%;max-width:380px}
+ .k{display:flex;align-items:center;gap:8px;font:700 12px/1 -apple-system;letter-spacing:.12em;color:#ffffffb0}
+ .dot{width:8px;height:8px;border-radius:4px;background:${ACCENT}}
+ h1{font:800 30px/1.1 -apple-system;margin:14px 0 6px} p{color:#ffffff99;font-size:14px;line-height:1.45;margin:0 0 22px}
+ input{width:100%;font-size:17px;padding:15px 16px;margin:0 0 10px;border-radius:14px;border:1px solid #ffffff22;background:#ffffff10;color:#fff;outline:none}
+ input:focus{border-color:${ACCENT}}
+ button{width:100%;margin-top:6px;padding:15px;border:0;border-radius:14px;background:${ACCENT};color:#fff;font:700 17px -apple-system}
+ button:disabled{opacity:.5} #msg{min-height:22px;margin-top:14px;font-size:14px;color:#ff8a80;line-height:1.4} #msg.ok{color:#9be59b}
+</style></head><body><form class="card" id="f" autocomplete="on">
+ <div class="k"><span class="dot"></span>NUVIO</div><h1>Sign in</h1>
+ <p>Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so your widgets stay signed in.</p>
+ <input id="e" type="email" name="email" autocomplete="username" placeholder="Email" autocapitalize="none" autocorrect="off" required>
+ <input id="p" type="password" name="password" autocomplete="current-password" placeholder="Password" required>
+ <button id="b" type="submit">Sign in</button><div id="msg"></div></form>
+<script>
+ window.__pending=null;
+ document.getElementById("f").addEventListener("submit",function(ev){ev.preventDefault();
+  var v={email:document.getElementById("e").value.trim(),password:document.getElementById("p").value};
+  if(!v.email||!v.password)return; document.getElementById("b").disabled=true; setMsg("Signing in…",true);
+  if(window.__pending){var c=window.__pending;window.__pending=null;c(v);} else window.__queued=v;});
+ function setMsg(t,ok){var m=document.getElementById("msg");m.textContent=t;m.className=ok?"ok":"";}
+ function fail(t){setMsg(t,false);document.getElementById("b").disabled=false;}
+</script></body></html>`;
+
 async function signInFlow() {
-  const a = new Alert();
-  a.title = "Sign in to Nuvio (v4)";
-  a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
-  a.addTextField("Email");
-  a.addSecureTextField("Password");
-  a.addAction("Sign in");
-  a.addCancelAction("Cancel");
-  if ((await a.presentAlert()) === -1) return false;
-  const email = a.textFieldValue(0).trim(), password = a.textFieldValue(1);
-  const say = async (title, msg) => { const x = new Alert(); x.title = title; x.message = msg; x.addAction("OK"); await x.presentAlert(); };
-  let s;
-  try { s = await signIn(email, password); }
-  catch (e) {
-    const m = String(e.message || e);
-    await say("Couldn't sign in", /invalid_credentials|Invalid login/i.test(m)
-      ? "Nuvio says the email or password is wrong.\n\nIf you normally sign in to Nuvio with Google or Apple, this account has no password yet. Use the email + password login instead."
-      : /not.confirmed/i.test(m) ? "Nuvio says this email isn't confirmed yet. Check your inbox for Nuvio's email." : m);
-    return false;
+  const say = async (title, msg) => { const x = new Alert(); x.title = title; x.message = String(msg); x.addAction("OK"); await x.presentAlert(); };
+  const wv = new WebView();
+  await wv.loadHTML(LOGIN_HTML);
+  let closed = false;
+  const shown = wv.present(false).then(() => { closed = true; return null; });
+  const waitSubmit = () => wv.evaluateJavaScript(
+    "if (window.__queued) { var q = window.__queued; window.__queued = null; completion(q); } else { window.__pending = completion; }", true);
+  let s = null;
+  while (!closed && !s) {
+    const v = await Promise.race([waitSubmit(), shown]);
+    if (!v || closed) break;
+    try { s = await signIn(String(v.email || ""), String(v.password || "")); }
+    catch (e) {
+      const m = String((e && e.message) || e);
+      const nice = /invalid_credentials|Invalid login/i.test(m)
+        ? "Wrong email or password. (If you normally use Google or Apple to sign in to Nuvio, there's no password on this account yet.)"
+        : /not.confirmed/i.test(m) ? "This email isn't confirmed yet. Check your inbox for Nuvio's email." : m;
+      try { await wv.evaluateJavaScript("fail(" + JSON.stringify(nice) + ")"); } catch (x) {}
+    }
   }
+  if (!s) return false;
   // Save the login FIRST, so a later hiccup (profiles) never throws it away.
   s.profile = 1; s.profileName = "Main";
   const w1 = writeSession(s);
+  try { await wv.evaluateJavaScript("setMsg(" + JSON.stringify("✓ Signed in. Close this page (top-left) to continue.") + ", true)"); } catch (x) {}
+  await shown;
   if (!w1.ok) { await say("Signed in, but couldn't save the login", w1.errs.join("\n")); return false; }
   try { await chooseProfile(s); writeSession(s); }
   catch (e) { await say("Signed in ✓", "Couldn't load your Nuvio profiles, so using profile 1.\n\n" + (e.detail || e.message || e)); }
@@ -497,7 +531,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v4)";
+    a.title = "Nuvio Up Next (v5)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
@@ -520,6 +554,6 @@ async function main() {
 try { await main(); }
 catch (e) {
   if (config.runsInWidget) throw e;
-  const x = new Alert(); x.title = "Nuvio Up Next error"; x.message = String((e && e.stack) || e).slice(0, 600); x.addAction("OK"); await x.presentAlert();
+  const x = new Alert(); x.title = "Nuvio Up Next error"; x.message = (String((e && e.message) || e) + (e && e.line ? `\n(line ${e.line})` : "") + "\n\n" + String((e && e.stack) || "")).slice(0, 600); x.addAction("OK"); await x.presentAlert();
   Script.complete();
 }
