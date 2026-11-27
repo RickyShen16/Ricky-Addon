@@ -27,6 +27,10 @@ const ACCENT = "#ff4b3e";
 // "ticket"  = cinema ticket: backdrop body + torn stub with % and 3 mini posters
 // "shelf"   = logo + big % on top, a row of posters (current one highlighted) along the bottom
 const LAYOUT = "slash";
+// Extra large (Mac desktop / iPad): "reel" | "shatter" | "radar"
+const XL_LAYOUT = "radar";
+const FAMILY = config.runsInWidget ? config.widgetFamily : (Device.isPhone() ? "medium" : "extraLarge");
+const IS_XL = FAMILY === "extraLarge" || FAMILY === "large";
 
 // Nuvio's official public API (nuvio.tv/docs). The publishable key is published there for third-party apps.
 const NUVIO = "https://api.nuvio.tv";
@@ -252,25 +256,25 @@ async function loadCard(s) {
   } else if (card.type === "series") {
     card.showSeason = card.season; card.showEpisode = card.finished ? card.episode + 1 : card.episode;
   }
-  if (card.tmdb && LAYOUT !== "hero" && LAYOUT !== "split") {
+  if (card.tmdb && (IS_XL || (LAYOUT !== "hero" && LAYOUT !== "split"))) {
     const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images&include_image_language=en,null`);
     card.poster = d && d.poster_path ? tmdbImg("w342", d.poster_path) : null;
   }
-  if (LAYOUT !== "hero") card.rows = await buildRows(progress, history, hero.content_id, done);
+  if (IS_XL || LAYOUT !== "hero") card.rows = await buildRows(progress, history, hero.content_id, done, IS_XL ? 6 : 3);
   return card;
 }
 
 // Up to 3 other titles: newest unfinished progress first (one row per show), then recent history.
-async function buildRows(progress, history, heroId, done) {
+async function buildRows(progress, history, heroId, done, max = 3) {
   const seen = new Set([heroId]), picks = [];
   const rows = progress.slice().sort((a, b) => b.last_watched - a.last_watched);
   for (const p of rows) {
-    if (picks.length >= 3) break;
+    if (picks.length >= max) break;
     if (seen.has(p.content_id) || (p.content_type === "movie" && done(p))) continue;
     seen.add(p.content_id); picks.push({ src: "progress", p });
   }
   for (const h of history) {
-    if (picks.length >= 3) break;
+    if (picks.length >= max) break;
     if (seen.has(h.content_id)) continue;
     seen.add(h.content_id); picks.push({ src: "history", h });
   }
@@ -290,7 +294,7 @@ async function buildRows(progress, history, heroId, done) {
     const ref = await resolveTmdb(x.content_id, x.content_type);
     if (ref) {
       const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images&include_image_language=en,null`);
-      if (d) { r.title = d.name || d.title || r.title; r.poster = d.poster_path ? tmdbImg("w185", d.poster_path) : null; }
+      if (d) { r.title = d.name || d.title || r.title; r.poster = d.poster_path ? tmdbImg("w185", d.poster_path) : null; r.backdrop = d.backdrop_path ? tmdbImg("w300", d.backdrop_path) : null; }
     }
     if (!r.title) r.title = String(x.content_id);
     out.push(r);
@@ -771,6 +775,190 @@ async function drawShelf(c) {
   return ctx.getImage();
 }
 
+// =====================================================================
+// EXTRA LARGE (Mac desktop) — 730 × 358
+// =====================================================================
+const XW = 730, XH = 358;
+function xlCtx(bg) { const ctx = new DrawContext(); ctx.size = new Size(XW, XH); ctx.opaque = true; ctx.respectScreenScale = true; ctx.setFillColor(col(bg)); ctx.fillRect(new Rect(0, 0, XW, XH)); return ctx; }
+function hgrad(ctx, x0, x1, y0, y1, hex, fromA, toA) { for (let x = x0; x < x1; x++) { const t = (x - x0) / (x1 - x0); ctx.setFillColor(col(hex, fromA + (toA - fromA) * t)); ctx.fillRect(new Rect(x, y0, 1, y1 - y0)); } }
+function vgrad(ctx, x0, x1, y0, y1, hex, fromA, toA) { for (let y = y0; y < y1; y++) { const t = (y - y0) / (y1 - y0); ctx.setFillColor(col(hex, fromA + (toA - fromA) * t)); ctx.fillRect(new Rect(x0, y, x1 - x0, 1)); } }
+function clock() { const d = new Date(), D = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][d.getDay()], M = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][d.getMonth()]; return `${D} ${d.getDate()} ${M} · ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+function tc(ms) { const t = Math.max(0, Math.round(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s2 = t % 60; return `${h}:${String(m).padStart(2, "0")}:${String(s2).padStart(2, "0")}`; }
+async function xlImages(c) { c._bd = await loadImage(c.backdrop); c._poster = await loadImage(c.poster); for (const r of c.rows || []) { r._img = await loadImage(r.poster); r._bd = await loadImage(r.backdrop); } }
+
+// ---------------- REEL: a strip of 35mm film running across the desk ----------------
+async function drawReel(c) {
+  const ctx = xlCtx("#060405"), info = heroInfo(c); await xlImages(c);
+  const S0 = 40, S1 = 318;                                     // film strip
+  ctx.setFillColor(col("#171011")); ctx.fillRect(new Rect(0, S0, XW, S1 - S0));
+  for (let x = 8; x < XW; x += 22) for (const y of [48, 299]) rrect(ctx, x, y, 12, 9, 2.5, col("#060405"));
+  const AMB = "#ff9a4d";
+  for (const [x, t] of [[28, "NUVIO 5219"], [210, "▸ 14A"], [470, "NUVIO 5219"], [640, "▸ 15"]]) text(ctx, t, x, 62, 120, Font.boldSystemFont(7), col(AMB, 0.65));
+  for (const [x, t] of [[120, "KODAK·NUVIO"], [380, "▸ 14"], [560, "KODAK·NUVIO"]]) text(ctx, t, x, 288, 120, Font.boldSystemFont(7), col(AMB, 0.65));
+
+  // header
+  rrect(ctx, 24, 18, 7, 7, 3.5, col(ACCENT));
+  text(ctx, "NUVIO  ·  NOW SHOWING", 37, 14, 300, Font.boldSystemFont(10), col("#ffffff", 0.8));
+  text(ctx, clock(), XW - 24 - 220, 14, 220, Font.boldSystemFont(10), col("#ffffff", 0.45), "right");
+
+  // hero frame
+  const FY = 76, FH = 206, HX = 24, HW = 404;
+  if (c._bd) ctx.drawImageInRect(cropTo(c._bd, HW, FH, 0.3), new Rect(HX, FY, HW, FH)); else rrect(ctx, HX, FY, HW, FH, 2, col("#2a1f21"));
+  hgrad(ctx, HX, HX + HW, FY, FY + FH, "#000000", 0.75, 0.05);
+  vgrad(ctx, HX, HX + HW, FY + 90, FY + FH, "#000000", 0, 0.7);
+  text(ctx, info.kick, HX + 16, FY + 14, 300, Font.boldSystemFont(9), col(ACCENT));
+  await drawLogo(ctx, c, HX + 16, FY + 34, 250, 64, 46);
+  text(ctx, fit(subLine(c, info), 12, 260, 0.55), HX + 16, FY + 108, 300, Font.semiboldSystemFont(12), col("#ffffff", 0.9));
+  text(ctx, pctText(c, info), HX + HW - 16 - 160, FY + FH - 66, 160, COND(58), col("#ffffff"), "right");
+  text(ctx, leftText(c, info), HX + 16, FY + FH - 24, 250, Font.mediumSystemFont(11), col("#ffffff", 0.7));
+
+  // other frames
+  const rows = (c.rows || []).slice(0, 3), OX = HX + HW + 12, OW = (XW - 24 - OX - 2 * 10) / 3;
+  rows.forEach((r, i) => {
+    const x = OX + i * (OW + 10);
+    const img = r._img || r._bd;
+    if (img) ctx.drawImageInRect(cropTo(img, OW, FH, 0.25), new Rect(x, FY, OW, FH)); else rrect(ctx, x, FY, OW, FH, 2, col("#2a1f21"));
+    vgrad(ctx, x, x + OW, FY + FH - 60, FY + FH, "#000000", 0, 0.75);
+    ctx.setFillColor(col("#000000", 0.25)); ctx.fillRect(new Rect(x, FY, OW, FH));
+    rrect(ctx, x, FY + FH - 4, OW, 4, 0, col("#ffffff", 0.18));
+    if (r.pct > 0) rrect(ctx, x, FY + FH - 4, Math.max(4, OW * r.pct), 4, 0, r.pct >= 1 ? col("#ffffff", 0.8) : col(ACCENT));
+    text(ctx, fit(r.title, 11, OW - 4, 0.58), x, S1 + 8, OW + 30, Font.boldSystemFont(11), col("#ffffff", 0.9));
+    text(ctx, fit(r.line, 9, OW, 0.52), x, S1 + 23, OW + 30, Font.mediumSystemFont(9), col("#ffffff", 0.5));
+  });
+
+  // playhead through the whole strip
+  const p = barPct(c, info), PX = HX + Math.max(2, HW * p);
+  rrect(ctx, PX - 1, S0 - 6, 2, S1 - S0 + 12, 1, col(ACCENT));
+  poly(ctx, [[PX - 7, S0 - 12], [PX + 7, S0 - 12], [PX, S0 - 3]], col(ACCENT));
+  const label = info.upNext ? `S${c.showSeason} · ${(c.seen || []).length}${c.seasonEpisodes ? "/" + c.seasonEpisodes : ""}` : c.duration ? `${tc(c.position)} / ${tc(c.duration)}` : "";
+  if (label) { const lw = estW(label, 10, 0.6) + 18; const lx = Math.min(Math.max(HX, PX - lw / 2), HX + HW - lw); rrect(ctx, lx, S1 + 8, lw, 20, 10, col(ACCENT)); text(ctx, label, lx, S1 + 11, lw, Font.heavySystemFont(10), col("#ffffff"), "center"); }
+  return ctx.getImage();
+}
+
+// ---------------- SHATTER: manga panels split by slanted gutters ----------------
+async function drawShatter(c) {
+  const ctx = xlCtx("#050304"), info = heroInfo(c); await xlImages(c);
+  const rows = (c.rows || []).slice(0, 3);
+  const cuts = [0, 352, 478, 604, XW].slice(0, 2 + rows.length).concat(rows.length < 3 ? [XW] : []);
+  const B = [0, 352]; for (let i = 0; i < rows.length; i++) B.push(352 + (i + 1) * ((XW - 352) / rows.length)); B[B.length - 1] = XW;
+  const SL = 22;                                    // slant: gutter goes from (m+SL/2, 0) to (m-SL/2, H)
+  // panel images (rectangles meet at m; the slanted gutter hides the seam)
+  const imgs = [c._bd || c._poster].concat(rows.map((r) => r._bd || r._img));
+  for (let i = 0; i < B.length - 1; i++) {
+    const x0 = B[i], x1 = B[i + 1], img = imgs[i];
+    if (img) ctx.drawImageInRect(cropTo(img, x1 - x0, XH, 0.3), new Rect(x0, 0, x1 - x0, XH)); else { ctx.setFillColor(col("#21181a")); ctx.fillRect(new Rect(x0, 0, x1 - x0, XH)); }
+    if (i === 0) { hgrad(ctx, x0, x1, 0, XH, "#000000", 0.8, 0.1); vgrad(ctx, x0, x1, 170, XH, "#000000", 0, 0.75); }
+    else { ctx.setFillColor(col("#0a0506", 0.45)); ctx.fillRect(new Rect(x0, 0, x1 - x0, XH)); vgrad(ctx, x0, x1, 150, XH, "#000000", 0, 0.9); }
+  }
+  // screentone dots, top-right of the hero panel
+  for (let y = 10; y < 130; y += 9) for (let x = 230; x < 340; x += 9) { const k = ((x - 230) / 110) * (1 - (y - 10) / 120); if (k <= 0.05) continue; const r = 2.4 * k; const e = new Path(); e.addEllipse(new Rect(x - r, y - r, r * 2, r * 2)); ctx.addPath(e); ctx.setFillColor(col("#ffffff", 0.22)); ctx.fillPath(); }
+  // gutters
+  for (let i = 1; i < B.length - 1; i++) {
+    const m = B[i], gw = SL / 2 + 6;
+    poly(ctx, [[m + SL / 2 - gw, 0], [m + SL / 2 + gw, 0], [m - SL / 2 + gw, XH], [m - SL / 2 - gw, XH]], col("#050304"));
+    poly(ctx, [[m + SL / 2 - 1.5, 0], [m + SL / 2 + 1.5, 0], [m - SL / 2 + 1.5, XH], [m - SL / 2 - 1.5, XH]], col(i === 1 ? ACCENT : "#ffffff", i === 1 ? 1 : 0.25));
+  }
+  // hero panel text
+  rrect(ctx, 24, 25, 7, 7, 3.5, col(ACCENT));
+  text(ctx, info.kick, 37, 21, 260, Font.boldSystemFont(10), col("#ffffff", 0.85));
+  await drawLogo(ctx, c, 24, 48, 250, 70, 50);
+  text(ctx, fit(subLine(c, info), 12, 280, 0.55), 24, 128, 300, Font.semiboldSystemFont(12), col("#ffffff", 0.9));
+  text(ctx, pctText(c, info), 20, 190, 300, COND(112), col("#ffffff"));
+  text(ctx, leftText(c, info), 26, 318, 200, Font.mediumSystemFont(11), col("#ffffff", 0.7));
+  barcode(ctx, 180, 334, 140, barPct(c, info), 34);
+  // other panels: giant ghost number + title
+  rows.forEach((r, i) => {
+    const x0 = B[i + 1] + 18, w = B[i + 2] - B[i + 1] - 34;
+    const big = r.type === "movie" ? `${Math.round(r.pct * 100)}%` : (r.line.match(/E(\d+)/) ? "E" + r.line.match(/E(\d+)/)[1] : "✓");
+    const bfs = Math.min(64, Math.floor(w / (big.length * 0.5)));
+    text(ctx, big, x0 - 4, 176 + (64 - bfs) * 0.8, w + 40, COND(bfs), col("#ffffff", 0.9));
+    text(ctx, fit(r.title.toUpperCase(), 11, w, 0.62), x0, 264, w + 40, Font.heavySystemFont(11), col("#ffffff"));
+    text(ctx, fit(r.line, 9.5, w, 0.52), x0, 281, w + 40, Font.mediumSystemFont(9.5), col("#ffffff", 0.6));
+    rrect(ctx, x0, 304, w, 3, 1.5, col("#ffffff", 0.18));
+    if (r.pct > 0) rrect(ctx, x0, 304, Math.max(3, w * r.pct), 3, 1.5, r.pct >= 1 ? col("#ffffff", 0.75) : col(ACCENT));
+    text(ctx, String(i + 2).padStart(2, "0"), x0, 22, 40, Font.boldSystemFont(10), col(ACCENT));
+  });
+  text(ctx, clock(), XW - 24 - 200, XH - 26, 200, Font.boldSystemFont(9), col("#ffffff", 0.4), "right");
+  return ctx.getImage();
+}
+
+// ---------------- RADAR: your shows as blips (distance = how recent, angle = how far in) ----------------
+async function drawRadar(c) {
+  const PANEL = "#0b0708";
+  const ctx = xlCtx(PANEL), info = heroInfo(c); await xlImages(c);
+  // hero, left
+  const HW = 400;
+  if (c._bd) ctx.drawImageInRect(cropTo(c._bd, HW, XH, 0.3), new Rect(0, 0, HW, XH));
+  hgrad(ctx, 0, HW, 0, XH, PANEL, 0.82, 0.25); hgrad(ctx, HW - 120, HW, 0, XH, PANEL, 0, 1); vgrad(ctx, 0, HW, 180, XH, PANEL, 0, 0.85);
+  rrect(ctx, 26, 27, 7, 7, 3.5, col(ACCENT));
+  text(ctx, "NUVIO RADAR  ·  " + info.kick, 39, 23, 340, Font.boldSystemFont(10), col("#ffffff", 0.85));
+  await drawLogo(ctx, c, 26, 52, 260, 72, 50);
+  text(ctx, fit(subLine(c, info), 12.5, 300, 0.55), 26, 134, 330, Font.semiboldSystemFont(12.5), col("#ffffff", 0.9));
+  const ov = c.overview || "";
+  text(ctx, pctText(c, info), 22, 200, 260, COND(84), col("#ffffff"));
+  text(ctx, leftText(c, info), 26, 296, 300, Font.mediumSystemFont(11), col("#ffffff", 0.7));
+  barcode(ctx, 26, 330, 300, barPct(c, info), 60);
+
+  // radar, right
+  const CX = 565, CY = 179, R = 152;
+  const now = Date.now(), WEEK = 7 * 86400e3;
+  const items = [{ hero: true, title: c.title, pct: barPct(c, info), when: c.when, _img: c._poster || c._bd }].concat((c.rows || []).slice(0, 6));
+  // sweep wedge, trailing the hero's angle
+  const ha = -90 + 360 * items[0].pct;
+  for (let k = 0; k < 40; k++) {
+    const a0 = (ha - 50 + k * 1.25) * Math.PI / 180, a1 = (ha - 50 + (k + 1) * 1.25 + 0.4) * Math.PI / 180;
+    poly(ctx, [[CX, CY], [CX + R * Math.cos(a0), CY + R * Math.sin(a0)], [CX + R * Math.cos(a1), CY + R * Math.sin(a1)]], col(ACCENT, 0.008 + 0.0075 * k));
+  }
+  for (const rr of [R / 3, (2 * R) / 3, R]) strokeCircle(ctx, CX, CY, rr, col(ACCENT, rr === R ? 0.55 : 0.25), rr === R ? 1.5 : 1);
+  rrect(ctx, CX - R, CY - 0.5, R * 2, 1, 0, col("#ffffff", 0.08)); rrect(ctx, CX - 0.5, CY - R, 1, R * 2, 0, col("#ffffff", 0.08));
+  for (let a = 0; a < 360; a += 10) { const t = a * Math.PI / 180, r0 = R + 3, r1 = R + (a % 90 === 0 ? 11 : 6); const p = new Path(); p.move(new Point(CX + r0 * Math.cos(t), CY + r0 * Math.sin(t))); p.addLine(new Point(CX + r1 * Math.cos(t), CY + r1 * Math.sin(t))); ctx.addPath(p); ctx.setStrokeColor(col("#ffffff", 0.3)); ctx.setLineWidth(1); ctx.strokePath(); }
+  // sweep edge
+  { const t = ha * Math.PI / 180; const p = new Path(); p.move(new Point(CX, CY)); p.addLine(new Point(CX + R * Math.cos(t), CY + R * Math.sin(t))); ctx.addPath(p); ctx.setStrokeColor(col(ACCENT, 0.9)); ctx.setLineWidth(1.5); ctx.strokePath(); }
+  for (const [rr, t] of [[R / 3, "TODAY"], [(2 * R) / 3, "3 DAYS"], [R, "1 WEEK"]]) { const a = 135 * Math.PI / 180; text(ctx, t, CX + rr * Math.cos(a) - 64, CY + rr * Math.sin(a) - 4, 60, Font.boldSystemFont(7), col("#ffffff", 0.35), "right"); }
+  text(ctx, "START", CX - 30, CY - R - 26, 60, Font.boldSystemFont(7), col(ACCENT, 0.85), "center");
+  // blips: place, then nudge clockwise until nothing overlaps; labels flip side or hide if crowded
+  const placed = [], labels = [];
+  const hit = (a, b2) => a.x < b2.x + b2.w && b2.x < a.x + a.w && a.y < b2.y + b2.h && b2.y < a.y + a.h;
+  items.forEach((it) => {
+    const age = Math.min(1, Math.max(0, (now - (it.when || now)) / WEEK));
+    const rad = (it.hero ? 0.22 : 0.34) * R + age * (0.6 * R), br = it.hero ? 21 : 14;
+    let ang = -90 + 360 * Math.min(0.97, it.pct || 0), bx, by;
+    for (let k = 0; k < 24; k++) {
+      const t = ang * Math.PI / 180; bx = CX + rad * Math.cos(t); by = CY + rad * Math.sin(t);
+      if (!placed.some((q) => Math.hypot(q.x - bx, q.y - by) < q.r + br + 10)) break;
+      ang += 360 / 24 * (k % 2 ? 1 : 1.3);
+    }
+    placed.push({ x: bx, y: by, r: br, it });
+  });
+  for (const q of placed) labels.push({ x: q.x - q.r - 2, y: q.y - q.r - 2, w: (q.r + 2) * 2, h: (q.r + 2) * 2 });
+  placed.forEach((q) => {
+    const it = q.it, bx = q.x, by = q.y, br = q.r;
+    if (it._img) { ctx.drawImageInRect(cropTo(it._img, br * 2, br * 2, 0.2), new Rect(bx - br, by - br, br * 2, br * 2)); strokeCircle(ctx, bx, by, br + 5, col(PANEL), 10); }
+    else { const e = new Path(); e.addEllipse(new Rect(bx - br, by - br, br * 2, br * 2)); ctx.addPath(e); ctx.setFillColor(col("#2a1f21")); ctx.fillPath(); }
+    strokeCircle(ctx, bx, by, br + 1, it.hero ? col(ACCENT) : col("#ffffff", 0.5), it.hero ? 2.5 : 1.2);
+    if (it.hero) strokeCircle(ctx, bx, by, br + 7, col(ACCENT, 0.35), 1);
+  });
+  placed.forEach((q) => {
+    const it = q.it, bx = q.x, by = q.y, br = q.r;
+    const t1 = fit(it.title || "", 9.5, 104, 0.58);
+    const t2 = it.hero ? (info.upNext ? "up next" : `${Math.round(it.pct * 100)}%`) : `${Math.round((it.pct || 0) * 100)}% · ${ago(it.when || now)}`;
+    const lw = Math.max(estW(t1, 9.5, 0.58), estW(t2, 8, 0.55)) + 4;
+    const prefRight = bx >= CX - 20;
+    for (const right of [prefRight, !prefRight]) {
+      const box = { x: right ? bx + br + 6 : bx - br - 6 - lw, y: by - 13, w: lw, h: 26 };
+      if (box.x < 408 || box.x + box.w > XW - 6 || labels.some((l) => hit(l, box))) continue;
+      labels.push(box);
+      text(ctx, t1, box.x, by - 12, lw + 20, Font.boldSystemFont(9.5), col("#ffffff", it.hero ? 1 : 0.85), right ? "left" : "left");
+      text(ctx, t2, box.x, by + 1, lw + 20, Font.mediumSystemFont(8), col(it.hero ? ACCENT : "#ffffff", it.hero ? 1 : 0.5), "left");
+      break;
+    }
+  });
+  { const e = new Path(); e.addEllipse(new Rect(CX - 3, CY - 3, 6, 6)); ctx.addPath(e); ctx.setFillColor(col(ACCENT)); ctx.fillPath(); }
+  text(ctx, "closer = more recent  ·  clockwise = further in", XW - 18 - 190, XH - 22, 190, Font.mediumSystemFont(8), col("#ffffff", 0.35), "right");
+  text(ctx, clock(), XW - 18 - 150, 14, 150, Font.boldSystemFont(9), col("#ffffff", 0.4), "right");
+  return ctx.getImage();
+}
+
 function messageCard(title, body) {
   const ctx = new DrawContext();
   ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
@@ -814,6 +1002,7 @@ async function buildWidget() {
     if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
     else {
       const hasRows = card.rows && card.rows.length;
+      if (IS_XL) { const xd = XL_LAYOUT === "reel" ? drawReel : XL_LAYOUT === "shatter" ? drawShatter : drawRadar; w.backgroundImage = await xd(card); w.url = deepLink(card); return w; }
       const draw = LAYOUT === "classic" ? drawClassic : LAYOUT === "slash" ? drawSlash : LAYOUT === "ticket" ? drawTicket
         : LAYOUT === "shelf" ? drawShelf : LAYOUT === "split" && hasRows ? drawSplit : drawCard;
       w.backgroundImage = await draw(card); w.url = deepLink(card);
@@ -982,7 +1171,7 @@ async function main() {
     } else if (i !== 0) return Script.complete();
   }
   const w = await buildWidget();
-  await w.presentMedium();
+  if (IS_XL) await w.presentExtraLarge(); else await w.presentMedium();
   Script.complete();
 }
 
