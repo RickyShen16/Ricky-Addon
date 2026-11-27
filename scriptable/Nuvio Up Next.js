@@ -26,7 +26,7 @@ const ACCENT = "#ff4b3e";
 // "slash"   = diagonal red cut through the backdrop; Up Next steps down the diagonal
 // "ticket"  = cinema ticket: backdrop body + torn stub with % and 3 mini posters
 // "shelf"   = logo + big % on top, a row of posters (current one highlighted) along the bottom
-const LAYOUT = "split";
+const LAYOUT = "slash";
 
 // Nuvio's official public API (nuvio.tv/docs). The publishable key is published there for third-party apps.
 const NUVIO = "https://api.nuvio.tv";
@@ -633,6 +633,15 @@ const pctText = (c, info) => (info.upNext ? (info.notOut ? `IN ${info.d}D` : `E$
 const barPct = (c, info) => (info.upNext ? (c.seasonEpisodes ? Math.min(1, (c.seen || []).length / c.seasonEpisodes) : 0) : info.pct);
 const leftText = (c, info) => (info.upNext ? (info.notOut ? `E${c.showEpisode} airs soon` : `${(c.seen || []).length}${c.seasonEpisodes ? "/" + c.seasonEpisodes : ""} watched`) : info.left ? `${hm(info.left)} left` : "");
 
+// Ticket-style barcode progress: bars of varying height, red up to the % watched.
+function barcode(ctx, x, yBottom, w, pct, n = 40) {
+  const step = w / n;
+  for (let i = 0; i < n; i++) {
+    const h = [13, 9, 13, 6, 13, 10][i % 6];
+    rrect(ctx, x + i * step, yBottom - h, Math.max(1.6, step * 0.42), h, 0.6, i / n < pct ? col(ACCENT) : col("#ffffff", 0.2));
+  }
+}
+
 // SLASH
 async function drawSlash(c) {
   const ctx = new DrawContext(); ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
@@ -654,13 +663,13 @@ async function drawSlash(c) {
   text(ctx, info.kick, X, 14, 170, Font.boldSystemFont(8.5), col(ACCENT));
   await drawLogo(ctx, c, X, 30, 150, 38, 28);
   text(ctx, fit(subLine(c, info), 10, 150, 0.55), X, 74, 190, Font.semiboldSystemFont(10), col("#ffffff", 0.85));
-  text(ctx, pctText(c, info), X, 96, 120, COND(34), col("#ffffff"));
-  text(ctx, leftText(c, info), X + 2, 134, 150, Font.mediumSystemFont(9), col("#ffffff", 0.6));
-  const BW = 140, bp = barPct(c, info); rrect(ctx, X, H - 12, BW, 3, 1.5, col("#ffffff", 0.18));
-  if (bp > 0) rrect(ctx, X, H - 12, Math.max(3, BW * bp), 3, 1.5, col(ACCENT));
-  if (!(c.rows && c.rows.length)) text(ctx, "Nothing else\nin progress", edge(40) + 16, 36, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35));
+  const big = pctText(c, info);
+  text(ctx, big, X, 90, 120, COND(34), col("#ffffff"));
+  text(ctx, leftText(c, info), X + 142 - 120, 112, 120, Font.mediumSystemFont(9), col("#ffffff", 0.65), "right");
+  barcode(ctx, X, H - 12, 142, barPct(c, info));
+  if (!(c.rows && c.rows.length)) { text(ctx, "Nothing else", edge(40) + 16, 36, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35)); text(ctx, "in progress", edge(54) + 16, 50, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35)); }
 
-  text(ctx, "UP NEXT", edge(14) + 16, 14, 80, Font.boldSystemFont(8.5), col("#ffffff", 0.45));
+  text(ctx, "ALSO WATCHING", edge(14) + 16, 14, 110, Font.boldSystemFont(8.5), col("#ffffff", 0.45));
   await loadRowImages(c.rows);
   (c.rows || []).slice(0, 3).forEach((r, i) => {
     const y = 32 + i * 41, x = edge(y + 16) + 16, w = W - x - 12;
@@ -829,7 +838,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v7)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v8)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -890,7 +899,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v7)";
+    a.title = "Sign in to Nuvio (v8)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -957,7 +966,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v7)";
+    a.title = "Nuvio Up Next (v8)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
