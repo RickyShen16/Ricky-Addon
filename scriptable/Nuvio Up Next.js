@@ -443,7 +443,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v5)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v6)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -498,7 +498,8 @@ async function signInFlow() {
   let closed = false;
   const shown = wv.present(false).then(() => { closed = true; return null; });
   const waitSubmit = () => wv.evaluateJavaScript(
-    "if (window.__queued) { var q = window.__queued; window.__queued = null; completion(q); } else { window.__pending = completion; }", true);
+    // Wrapped so the snippet itself evaluates to undefined: Scriptable rejects a function as a result.
+    "(function () { if (window.__queued) { var q = window.__queued; window.__queued = null; completion(q); } else { window.__pending = completion; } })();", true);
   let s = null;
   while (!closed && !s) {
     const v = await Promise.race([waitSubmit(), shown]);
@@ -509,14 +510,14 @@ async function signInFlow() {
       const nice = /invalid_credentials|Invalid login/i.test(m)
         ? "Wrong email or password. (If you normally use Google or Apple to sign in to Nuvio, there's no password on this account yet.)"
         : /not.confirmed/i.test(m) ? "This email isn't confirmed yet. Check your inbox for Nuvio's email." : m;
-      try { await wv.evaluateJavaScript("fail(" + JSON.stringify(nice) + ")"); } catch (x) {}
+      try { await wv.evaluateJavaScript("fail(" + JSON.stringify(nice) + "); null;"); } catch (x) {}
     }
   }
   if (!s) return false;
   // Save the login FIRST, so a later hiccup (profiles) never throws it away.
   s.profile = 1; s.profileName = "Main";
   const w1 = writeSession(s);
-  try { await wv.evaluateJavaScript("setMsg(" + JSON.stringify("✓ Signed in. Close this page (top-left) to continue.") + ", true)"); } catch (x) {}
+  try { await wv.evaluateJavaScript("setMsg(" + JSON.stringify("✓ Signed in. Close this page (top-left) to continue.") + ", true); null;"); } catch (x) {}
   await shown;
   if (!w1.ok) { await say("Signed in, but couldn't save the login", w1.errs.join("\n")); return false; }
   try { await chooseProfile(s); writeSession(s); }
@@ -531,7 +532,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v5)";
+    a.title = "Nuvio Up Next (v6)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
