@@ -50,8 +50,9 @@ async function readSession() {
   return null;
 }
 function writeSession(s) {
-  const txt = JSON.stringify(s);
-  for (const fm of [cloud, local]) { if (!fm) continue; try { fm.writeString(pathIn(fm, SESSION_FILE), txt); } catch (e) {} }
+  const txt = JSON.stringify(s); let ok = 0; const errs = [];
+  for (const fm of [cloud, local]) { if (!fm) continue; try { fm.writeString(pathIn(fm, SESSION_FILE), txt); ok++; } catch (e) { errs.push((fm === cloud ? "iCloud: " : "phone: ") + (e.message || e)); } }
+  return { ok, errs };
 }
 function clearSession() {
   for (const fm of [cloud, local]) { if (!fm) continue; try { const p = pathIn(fm, SESSION_FILE); if (fm.fileExists(p)) fm.remove(p); } catch (e) {} }
@@ -436,7 +437,8 @@ async function diagnose() {
 
 // ---------- in-app: sign in / profile / sign out ----------
 async function chooseProfile(s) {
-  const profiles = (await nuvioReq("/rest/v1/rpc/sync_pull_profiles", undefined, s.access_token)) || [];
+  let profiles = await nuvioReq("/rest/v1/rpc/sync_pull_profiles", undefined, s.access_token);
+  if (!Array.isArray(profiles)) profiles = [];
   if (profiles.length <= 1) { const p = profiles[0]; s.profile = p ? p.profile_index : 1; s.profileName = p ? p.name : "Main"; return; }
   const a = new Alert();
   a.title = "Which Nuvio profile?";
@@ -457,15 +459,24 @@ async function signInFlow() {
   a.addCancelAction("Cancel");
   if ((await a.presentAlert()) === -1) return false;
   const email = a.textFieldValue(0).trim(), password = a.textFieldValue(1);
-  try {
-    const s = await signIn(email, password);
-    await chooseProfile(s);
-    writeSession(s);
-    return true;
-  } catch (e) {
-    const err = new Alert(); err.title = "Couldn't sign in"; err.message = e.auth ? "Wrong email or password." : String(e.message || e); err.addAction("OK"); await err.presentAlert();
+  const say = async (title, msg) => { const x = new Alert(); x.title = title; x.message = msg; x.addAction("OK"); await x.presentAlert(); };
+  let s;
+  try { s = await signIn(email, password); }
+  catch (e) {
+    const m = String(e.message || e);
+    await say("Couldn't sign in", /invalid_credentials|Invalid login/i.test(m)
+      ? "Nuvio says the email or password is wrong.\n\nIf you normally sign in to Nuvio with Google or Apple, this account has no password yet. Use the email + password login instead."
+      : /not.confirmed/i.test(m) ? "Nuvio says this email isn't confirmed yet. Check your inbox for Nuvio's email." : m);
     return false;
   }
+  // Save the login FIRST, so a later hiccup (profiles) never throws it away.
+  s.profile = 1; s.profileName = "Main";
+  const w1 = writeSession(s);
+  if (!w1.ok) { await say("Signed in, but couldn't save the login", w1.errs.join("\n")); return false; }
+  try { await chooseProfile(s); writeSession(s); }
+  catch (e) { await say("Signed in ✓", "Couldn't load your Nuvio profiles, so using profile 1.\n\n" + (e.detail || e.message || e)); }
+  if (!(await readSession())) { await say("Signed in, but the login didn't stick", "Saved it, but couldn't read it back. Send Claude a screenshot."); return false; }
+  return true;
 }
 
 async function main() {
@@ -494,4 +505,9 @@ async function main() {
   Script.complete();
 }
 
-await main();
+try { await main(); }
+catch (e) {
+  if (config.runsInWidget) throw e;
+  const x = new Alert(); x.title = "Nuvio Up Next error"; x.message = String((e && e.stack) || e).slice(0, 600); x.addAction("OK"); await x.presentAlert();
+  Script.complete();
+}
