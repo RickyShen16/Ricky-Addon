@@ -20,6 +20,10 @@
 // Free TMDB key (themoviedb.org → Settings → API): logos, backdrops, episode names.
 const TMDB_KEY = "";
 const ACCENT = "#ff4b3e";
+// "split"   = big backdrop + official logo on the left, 3-title Up Next list on the right
+// "classic" = the old Simkl Radar look: round poster + ring, title, bar, Up Next list
+// "hero"    = one title, full backdrop (no list)
+const LAYOUT = "split";
 
 // Nuvio's official public API (nuvio.tv/docs). The publishable key is published there for third-party apps.
 const NUVIO = "https://api.nuvio.tv";
@@ -245,7 +249,50 @@ async function loadCard(s) {
   } else if (card.type === "series") {
     card.showSeason = card.season; card.showEpisode = card.finished ? card.episode + 1 : card.episode;
   }
+  if (card.tmdb && LAYOUT === "classic") {
+    const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images&include_image_language=en,null`);
+    card.poster = d && d.poster_path ? tmdbImg("w342", d.poster_path) : null;
+  }
+  if (LAYOUT !== "hero") card.rows = await buildRows(progress, history, hero.content_id, done);
   return card;
+}
+
+// Up to 3 other titles: newest unfinished progress first (one row per show), then recent history.
+async function buildRows(progress, history, heroId, done) {
+  const seen = new Set([heroId]), picks = [];
+  const rows = progress.slice().sort((a, b) => b.last_watched - a.last_watched);
+  for (const p of rows) {
+    if (picks.length >= 3) break;
+    if (seen.has(p.content_id) || (p.content_type === "movie" && done(p))) continue;
+    seen.add(p.content_id); picks.push({ src: "progress", p });
+  }
+  for (const h of history) {
+    if (picks.length >= 3) break;
+    if (seen.has(h.content_id)) continue;
+    seen.add(h.content_id); picks.push({ src: "history", h });
+  }
+  const out = [];
+  for (const it of picks) {
+    const x = it.p || it.h;
+    const r = { type: x.content_type === "movie" ? "movie" : "series", title: x.title || "", pct: 0, line: "" };
+    if (it.p) {
+      const p = it.p, fin = done(p), left = p.duration > 0 ? mins(p.duration - p.position) : null;
+      r.pct = p.duration > 0 ? Math.min(1, p.position / p.duration) : 0;
+      const short = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
+      if (r.type === "movie") r.line = left ? `${short(left)} left` : "Movie";
+      else if (fin) { r.line = `S${p.season} E${p.episode + 1} next`; r.pct = 1; }
+      else r.line = `S${p.season} E${p.episode}` + (left ? ` · ${short(left)} left` : "");
+      r.when = p.last_watched;
+    } else { r.line = "Watched " + ago(it.h.watched_at); r.pct = 1; r.when = it.h.watched_at; }
+    const ref = await resolveTmdb(x.content_id, x.content_type);
+    if (ref) {
+      const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images&include_image_language=en,null`);
+      if (d) { r.title = d.name || d.title || r.title; r.poster = d.poster_path ? tmdbImg("w185", d.poster_path) : null; }
+    }
+    if (!r.title) r.title = String(x.content_id);
+    out.push(r);
+  }
+  return out;
 }
 
 // ---------- drawing helpers ----------
@@ -263,6 +310,17 @@ function cover(ctx, img, x, y, w, h, focusY = 0.35) {
   const s = Math.max(w / img.size.width, h / img.size.height);
   const iw = img.size.width * s, ih = img.size.height * s;
   ctx.drawImageInRect(img, new Rect(x + (w - iw) / 2, y + (h - ih) * focusY, iw, ih));
+}
+// Scale+crop an image into its own w×h canvas, so nothing spills outside the box.
+function cropTo(img, w, h, focusY = 0.35) {
+  const c = new DrawContext(); c.size = new Size(w, h); c.respectScreenScale = true; c.opaque = false;
+  const s = Math.max(w / img.size.width, h / img.size.height), iw = img.size.width * s, ih = img.size.height * s;
+  c.drawImageInRect(img, new Rect((w - iw) / 2, (h - ih) * focusY, iw, ih));
+  return c.getImage();
+}
+function strokeCircle(ctx, cx, cy, r, color, lw) {
+  ctx.setStrokeColor(color); ctx.setLineWidth(lw);
+  const p = new Path(); p.addEllipse(new Rect(cx - r, cy - r, r * 2, r * 2)); ctx.addPath(p); ctx.strokePath();
 }
 function fade(ctx, x0, x1, fromA, toA, hex) {   // horizontal fade in 1pt strips (no overlap = no banding)
   for (let x = x0; x < x1; x++) {
@@ -381,6 +439,180 @@ async function drawCard(c) {
   return ctx.getImage();
 }
 
+// ---------- shared hero wording ----------
+function heroInfo(c) {
+  const upNext = c.type === "series" && c.finished;
+  const d = upNext ? daysUntil(c.airDate) : null;
+  const notOut = upNext && d != null && d > 0;
+  const kick = c.type === "movie" ? "CONTINUE · MOVIE" : notOut ? "NEW EPISODE SOON" : upNext ? "UP NEXT" : "CONTINUE WATCHING";
+  const pct = upNext ? 0 : c.duration > 0 ? Math.min(1, c.position / c.duration) : 0;
+  const left = !upNext && c.duration > 0 ? mins(c.duration - c.position) : null;
+  let ep = "";
+  if (c.type === "series" && c.showSeason != null) ep = `S${c.showSeason} · E${c.showEpisode}`;
+  return { upNext, d, notOut, kick, pct, left, ep };
+}
+function rowsBlock(ctx, rows, x, y0, w, rowH, posterW, posterH) {
+  rows.slice(0, 3).forEach((r, i) => {
+    const y = y0 + i * rowH;
+    if (r._img) ctx.drawImageInRect(cropTo(r._img, posterW, posterH, 0.2), new Rect(x, y, posterW, posterH));
+    else rrect(ctx, x, y, posterW, posterH, 3, col("#ffffff", 0.08));
+    const tx = x + posterW + 8, tw = w - posterW - 8;
+    text(ctx, fit(r.title, 10.5, tw, 0.58), tx, y - 1, tw + 30, Font.boldSystemFont(10.5), col("#ffffff", 0.95));
+    text(ctx, fit(r.line, 8.5, tw, 0.56), tx, y + 13, tw + 30, Font.mediumSystemFont(8.5), col("#ffffff", 0.55));
+    rrect(ctx, tx, y + posterH - 4, tw, 3, 1.5, col("#ffffff", 0.14));
+    if (r.pct > 0) rrect(ctx, tx, y + posterH - 4, Math.max(3, tw * r.pct), 3, 1.5, r.pct >= 1 ? col("#ffffff", 0.75) : col(ACCENT));
+  });
+}
+async function loadRowImages(rows) { for (const r of rows || []) r._img = await loadImage(r.poster); }
+
+// ---------- layout: split (backdrop hero + Up Next list) ----------
+async function drawSplit(c) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
+  ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
+  const HW = 204, PX = HW;
+  const info = heroInfo(c);
+
+  const bd = await loadImage(c.backdrop);
+  if (bd) {
+    ctx.drawImageInRect(cropTo(bd, HW, H, 0.3), new Rect(0, 0, HW, H));
+    for (let x = 0; x < HW; x++) { const t = x / HW; ctx.setFillColor(col(BG, 0.9 - 0.55 * t)); ctx.fillRect(new Rect(x, 0, 1, H)); }
+    vfadeRect(ctx, 0, HW, Math.round(H * 0.5), H, 0, 0.8);
+  }
+  // panel
+  ctx.setFillColor(col("#130f11")); ctx.fillRect(new Rect(PX, 0, W - PX, H));
+  ctx.setFillColor(col("#ffffff", 0.07)); ctx.fillRect(new Rect(PX, 0, 1, H));
+
+  const X = 14;
+  rrect(ctx, X, 17, 6, 6, 3, col(ACCENT));
+  text(ctx, info.kick, X + 11, 14, 170, Font.boldSystemFont(9), col("#ffffff", 0.75));
+
+  let y = 31;
+  const logo = await loadImage(c.logo);
+  if (logo) {
+    const r = logo.size.width / logo.size.height; let lh = 36, lw = lh * r;
+    if (lw > 160) { lw = 160; lh = lw / r; }
+    ctx.drawImageInRect(logo, new Rect(X, y + (36 - lh) / 2, lw, lh)); y += 43;
+  } else {
+    const t = (c.title || "Untitled").toUpperCase(), fs = estW(t, 26, 0.42) > 170 ? 20 : 26;
+    text(ctx, fit(t, fs, 176, 0.42), X, y + (26 - fs), 200, new Font("Futura-CondensedExtraBold", fs), col("#ffffff")); y += 36;
+  }
+  let sub;
+  if (c.type === "series") sub = info.ep + (c.epName ? `  ${c.epName}` : "");
+  else { const parts = [c.year, c.runtime ? hm(c.runtime) : null, c.rating ? `★ ${c.rating}` : null]; sub = parts.filter(Boolean).join("  ·  "); }
+  text(ctx, fit(sub, 10.5, 180, 0.55), X, y, 200, Font.semiboldSystemFont(10.5), col("#ffffff", 0.88));
+
+  const BY = H - 20, BW = 174;
+  if (!info.upNext) {
+    text(ctx, `${Math.round(info.pct * 100)}%`, X, BY - 16, 50, Font.heavySystemFont(10.5), col("#ffffff"));
+    if (info.left) text(ctx, `${hm(info.left)} left`, X + BW - 100, BY - 15, 100, Font.mediumSystemFont(9.5), col("#ffffff", 0.65), "right");
+    rrect(ctx, X, BY, BW, 4, 2, col("#ffffff", 0.2));
+    if (info.pct > 0) rrect(ctx, X, BY, Math.max(4, BW * info.pct), 4, 2, col(ACCENT));
+  } else {
+    const n = c.seasonEpisodes && c.seasonEpisodes <= 30 ? c.seasonEpisodes : null;
+    const label = info.notOut ? `E${c.showEpisode} in ${info.d} day${info.d === 1 ? "" : "s"}` : n ? `${(c.seen || []).length} of ${n} watched` : "Ready to watch";
+    text(ctx, label, X, BY - 16, 160, Font.heavySystemFont(10.5), col("#ffffff"));
+    if (n) {
+      const gap = n > 16 ? 2 : 3, tw = (BW - gap * (n - 1)) / n, seen = new Set(c.seen || []);
+      for (let i = 1; i <= n; i++) {
+        const now = i === c.showEpisode;
+        rrect(ctx, X + (i - 1) * (tw + gap), BY - (now ? 2 : 0), tw, now ? 8 : 4, 1.5, now ? col(ACCENT) : seen.has(i) ? col("#ffffff", 0.92) : col("#ffffff", 0.18));
+      }
+    } else rrect(ctx, X, BY, BW, 4, 2, col("#ffffff", 0.2));
+  }
+
+  // Up Next list
+  const RX = PX + 11, RW = W - RX - 12;
+  text(ctx, "UP NEXT", RX, 14, 100, Font.boldSystemFont(9), col("#ffffff", 0.5));
+  await loadRowImages(c.rows);
+  if (c.rows && c.rows.length) rowsBlock(ctx, c.rows, RX, 33, RW, 40, 22, 33);
+  else text(ctx, "Nothing else yet", RX, 34, RW + 20, Font.mediumSystemFont(9.5), col("#ffffff", 0.4));
+  return ctx.getImage();
+}
+function vfadeRect(ctx, x0, x1, y0, y1, fromA, toA) {
+  for (let y = y0; y < y1; y++) { const t = (y - y0) / (y1 - y0); ctx.setFillColor(col(BG, fromA + (toA - fromA) * t)); ctx.fillRect(new Rect(x0, y, x1 - x0, 1)); }
+}
+
+// ---------- layout: classic (old Simkl Radar look, on Nuvio data) ----------
+function sfWidth(str, fs) {
+  let w = 0;
+  for (const ch of str || "") {
+    if (ch === " ") w += fs * 0.28; else if (/[ilIjtf.,!:;'|]/.test(ch)) w += fs * 0.30;
+    else if (/[mwMW]/.test(ch)) w += fs * 0.85; else if (/[A-Z0-9]/.test(ch)) w += fs * 0.62; else w += fs * 0.54;
+  }
+  return w;
+}
+function layoutTitle(title, maxW) {
+  title = (title || "").trim(); const ladder = [22, 20, 18, 16, 14];
+  for (const fs of ladder) if (sfWidth(title, fs) <= maxW) return { fs, lines: [title] };
+  const words = title.split(/\s+/);
+  for (const fs of ladder) for (let i = words.length - 1; i >= 1; i--) {
+    const a = words.slice(0, i).join(" "), b = words.slice(i).join(" ");
+    if (sfWidth(a, fs) <= maxW && sfWidth(b, fs) <= maxW) return { fs, lines: [a, b] };
+  }
+  return { fs: 14, lines: [fit(title, 14, maxW, 0.6)] };
+}
+const trk = (t) => (t || "").split("").join("\u2009");
+async function drawClassic(c) {
+  const CW = 364, CH = 170;
+  const ctx = new DrawContext();
+  ctx.size = new Size(CW, CH); ctx.opaque = true; ctx.respectScreenScale = true;
+  ctx.setFillColor(col("#0f0c0d")); ctx.fillRect(new Rect(0, 0, CW, CH));
+  const info = heroInfo(c);
+  const ringPct = info.upNext ? 1 : info.pct;
+
+  // left: round poster + progress ring
+  const cx = 64, cy = 85, R = 41, ringR = 48;
+  const poster = await loadImage(c.poster || c.backdrop);
+  if (poster) {
+    const sq = cropTo(poster, R * 2, R * 2, 0.18);
+    ctx.drawImageInRect(sq, new Rect(cx - R, cy - R, R * 2, R * 2));
+    const Lm = R * 0.5; strokeCircle(ctx, cx, cy, R + Lm / 2, col("#0f0c0d"), Lm);   // round mask
+    ctx.setFillColor(col("#000000", 0.35)); const dim = new Path(); dim.addEllipse(new Rect(cx - R, cy - R, R * 2, R * 2)); ctx.addPath(dim); ctx.fillPath();
+  } else { ctx.setFillColor(col("#2a2224")); const pe = new Path(); pe.addEllipse(new Rect(cx - R, cy - R, R * 2, R * 2)); ctx.addPath(pe); ctx.fillPath(); }
+  strokeCircle(ctx, cx, cy, ringR, col("#ffffff", 0.18), 3);
+  if (ringPct > 0) {
+    const seg = Math.max(2, Math.round(72 * ringPct)), ap = new Path();
+    for (let i = 0; i <= seg; i++) { const a = (-90 + 360 * ringPct * (i / seg)) * Math.PI / 180, px = cx + ringR * Math.cos(a), py = cy + ringR * Math.sin(a); if (i === 0) ap.move(new Point(px, py)); else ap.addLine(new Point(px, py)); }
+    ctx.setStrokeColor(col(ACCENT)); ctx.setLineWidth(3.5); ctx.addPath(ap); ctx.strokePath();
+  }
+  if (!info.upNext) {
+    const num = String(Math.round(info.pct * 100));
+    text(ctx, num + "%", cx - 40, cy - 12, 80, Font.heavySystemFont(20), col("#ffffff"), "center");
+  } else {
+    const tri = new Path(); tri.move(new Point(cx - 6, cy - 9)); tri.addLine(new Point(cx - 6, cy + 9)); tri.addLine(new Point(cx + 9, cy)); tri.closeSubpath();
+    ctx.addPath(tri); ctx.setFillColor(col("#ffffff", 0.95)); ctx.fillPath();
+  }
+
+  // middle
+  const mx = 122, dvx = 226, midW = dvx - 12 - mx;
+  text(ctx, trk(info.kick.replace("CONTINUE · MOVIE", "NOW WATCHING").replace("CONTINUE WATCHING", "NOW WATCHING")), mx, 38, 140, Font.boldSystemFont(8.5), col("#ffffff", 0.55));
+  const lay = layoutTitle(c.title, midW);
+  let yy = lay.lines.length === 2 ? 50 : 53;
+  for (const ln of lay.lines) { text(ctx, ln, mx, yy, midW + 30, Font.boldSystemFont(lay.fs), col("#ffffff")); yy += lay.fs + 1; }
+  let sub;
+  if (c.type === "movie") sub = info.left ? `${hm(info.left)} LEFT` : "MOVIE";
+  else if (info.notOut) sub = `${info.ep} · IN ${info.d}D`;
+  else sub = (info.ep || "—") + (info.left ? ` · ${hm(info.left).toUpperCase()} LEFT` : info.upNext ? " · NEXT" : "");
+  text(ctx, trk(fit(sub, 8.5, midW, 0.78)), mx, yy + 6, midW + 30, Font.boldSystemFont(8.5), col("#ffffff", 0.75));
+  let by = Math.min(yy + 24, 136);
+  rrect(ctx, mx, by, midW, 6, 3, col("#ffffff", 0.14));
+  if (ringPct > 0) rrect(ctx, mx, by, Math.max(6, midW * ringPct), 6, 3, col(ACCENT));
+
+  // divider + Up Next
+  rrect(ctx, dvx - 0.8, 40, 1.6, 100, 0.8, col("#ffffff", 0.1));
+  const rx = 236;
+  text(ctx, trk("UP NEXT"), rx, 28, 100, Font.boldSystemFont(8.5), col("#ffffff", 0.55));
+  await loadRowImages(c.rows);
+  if (c.rows && c.rows.length) rowsBlock(ctx, c.rows, rx, 44, CW - rx - 16, 38, 20, 29);
+
+  // footer
+  const nowD = new Date(), hh = nowD.getHours() % 12 || 12, mm = String(nowD.getMinutes()).padStart(2, "0");
+  strokeCircle(ctx, 24, 154, 3.5, col("#ffffff", 0.3), 1.2);
+  text(ctx, trk(`NUVIO  ·  ${hh}:${mm} ${nowD.getHours() >= 12 ? "PM" : "AM"}`), 32, 149, 200, Font.boldSystemFont(7), col("#ffffff", 0.35));
+  return ctx.getImage();
+}
+
 function messageCard(title, body) {
   const ctx = new DrawContext();
   ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
@@ -422,7 +654,10 @@ async function buildWidget() {
   }
   try {
     if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
-    else { w.backgroundImage = await drawCard(card); w.url = deepLink(card); }
+    else {
+      const draw = LAYOUT === "classic" ? drawClassic : LAYOUT === "split" && card.rows && card.rows.length ? drawSplit : drawCard;
+      w.backgroundImage = await draw(card); w.url = deepLink(card);
+    }
   } catch (e) {
     w.backgroundImage = messageCard("Widget error", String(e.message || e).slice(0, 120));
   }
