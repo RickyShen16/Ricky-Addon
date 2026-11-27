@@ -66,12 +66,13 @@ async function nuvioReq(path, body, token, method = "POST") {
   r.headers = Object.assign({ apikey: NUVIO_KEY, "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {});
   if (body !== undefined) r.body = JSON.stringify(body);
   let j;
-  try { j = await r.loadJSON(); } catch (e) { const err = new Error("offline"); err.offline = true; throw err; }
+  try { j = await r.loadJSON(); } catch (e) { const err = new Error("No answer from Nuvio (" + path.replace(/\?.*$/, "").split("/").pop() + ")"); err.offline = true; throw err; }
   const code = r.response && r.response.statusCode;
-  if (code === 401 || code === 403 || (j && (j.error === "invalid_grant" || j.code === 401 || j.error_code === "refresh_token_not_found"))) {
-    const err = new Error("auth"); err.auth = true; throw err;
+  const what = path.replace(/^.*\/(rpc\/)?/, "").replace(/\?.*$/, "");
+  if (code === 401 || (j && (j.error === "invalid_grant" || j.error_code === "refresh_token_not_found" || j.error_code === "refresh_token_already_used"))) {
+    const err = new Error("auth"); err.auth = true; err.detail = `${what}: ${code} ${(j && (j.message || j.msg)) || ""}`; throw err;
   }
-  if (code && code >= 400) { const err = new Error((j && (j.msg || j.message || j.error_description)) || "Nuvio error " + code); err.status = code; throw err; }
+  if (code && code >= 400) { const err = new Error(`${what}: ${code} ${(j && (j.msg || j.message || j.error_description)) || ""}`.trim()); err.status = code; throw err; }
   return j;
 }
 
@@ -143,11 +144,27 @@ function pickBackdrop(images, fallback) {
   return (bs[0] && bs[0].file_path) || fallback || null;
 }
 
+// ---------- pull + tidy Nuvio data ----------
+const toMs = (v) => { if (v == null) return 0; if (typeof v === "string") { const n = Number(v); v = isNaN(n) ? Date.parse(v) : n; } return v > 0 && v < 1e12 ? v * 1000 : v || 0; };
+const num = (v) => (v == null || v === "" ? null : Number(v));
+async function pullData(s) {
+  const pid = s.profile || 1;
+  let progress = await nuvioReq("/rest/v1/rpc/sync_pull_watch_progress", { p_profile_id: pid, p_limit: 40 }, s.access_token);
+  let history = await nuvioReq("/rest/v1/rpc/sync_pull_watched_items", { p_profile_id: pid, p_page: 1, p_page_size: 300 }, s.access_token);
+  progress = (Array.isArray(progress) ? progress : []).map((p) => {
+    let pos = Number(p.position) || 0, dur = Number(p.duration) || 0;
+    if (dur > 0 && dur < 20000) { pos *= 1000; dur *= 1000; }        // seconds, not ms
+    return Object.assign({}, p, { position: pos, duration: dur, season: num(p.season), episode: num(p.episode), last_watched: toMs(p.last_watched || p.updated_at) });
+  });
+  history = (Array.isArray(history) ? history : []).map((h) => Object.assign({}, h, { season: num(h.season), episode: num(h.episode), watched_at: toMs(h.watched_at || h.created_at) }));
+  history.sort((a, b) => b.watched_at - a.watched_at);
+  return { progress, history };
+}
+
 // ---------- build the card's data ----------
 async function loadCard(s) {
   const pid = s.profile || 1;
-  const progress = (await nuvioReq("/rest/v1/rpc/sync_pull_watch_progress", { p_profile_id: pid, p_limit: 40 }, s.access_token)) || [];
-  const history = (await nuvioReq("/rest/v1/rpc/sync_pull_watched_items", { p_profile_id: pid, p_page: 1, p_page_size: 300 }, s.access_token)) || [];
+  const { progress, history } = await pullData(s);
 
   // Pick the hero: newest progress row that's either unfinished, or a finished episode (→ "up next").
   // A finished movie is skipped in favour of the next thing, falling back to history.
@@ -357,8 +374,11 @@ function messageCard(title, body) {
   ctx.setFillColor(col(BG)); ctx.fillRect(new Rect(0, 0, W, H));
   rrect(ctx, 16, 21, 6, 6, 3, col(ACCENT));
   text(ctx, "NUVIO", 27, 18, 120, Font.boldSystemFont(9), col("#ffffff", 0.6));
-  text(ctx, title, 16, 52, W - 32, Font.heavySystemFont(18), col("#ffffff"));
-  text(ctx, body, 16, 80, W - 32, Font.mediumSystemFont(11), col("#ffffff", 0.6));
+  text(ctx, title, 16, 48, W - 32, Font.heavySystemFont(18), col("#ffffff"));
+  const words = String(body).split(" "); const ls = [""];
+  for (const wd of words) { const t = (ls[ls.length - 1] + " " + wd).trim(); if (estW(t, 11, 0.53) > W - 40 && ls[ls.length - 1]) ls.push(wd); else ls[ls.length - 1] = t; }
+  ls.slice(0, 3).forEach((l, i) => text(ctx, l, 16, 80 + i * 15, W - 32, Font.mediumSystemFont(11), col("#ffffff", 0.6)));
+  text(ctx, "Open the script → Check connection for details", 16, H - 30, W - 32, Font.mediumSystemFont(9), col("#ffffff", 0.35));
   return ctx.getImage();
 }
 
@@ -383,16 +403,35 @@ async function buildWidget() {
     else problem = ["Nothing yet", "Start something in Nuvio and it shows up here."];
   } catch (e) {
     if (e.auth) problem = [e.none ? "Sign in to Nuvio" : "Nuvio login expired", "Tap to open Scriptable and sign in."];
-    else { card = readLocal(CACHE_FILE); if (!card) problem = ["Can't reach Nuvio", "Will try again shortly."]; }
+    else if (e.offline) { card = readLocal(CACHE_FILE); if (!card) problem = ["Can't reach Nuvio", String(e.message).slice(0, 120)]; }
+    else problem = ["Nuvio problem", String(e.message || e).slice(0, 120)];
     if (e.auth) w.url = `scriptable:///run/${encodeURIComponent(SCRIPT_NAME)}`;
   }
   try {
     if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
     else { w.backgroundImage = await drawCard(card); w.url = deepLink(card); }
   } catch (e) {
-    w.backgroundImage = messageCard("Widget error", String(e.message || e).slice(0, 60));
+    w.backgroundImage = messageCard("Widget error", String(e.message || e).slice(0, 120));
   }
   return w;
+}
+
+// ---------- in-app: connection check (shows no passwords or tokens) ----------
+async function diagnose() {
+  const lines = [];
+  const step = async (name, fn) => { try { const r = await fn(); lines.push("✅ " + name + (r ? ": " + r : "")); return true; } catch (e) { lines.push("❌ " + name + ": " + (e.detail || e.message || e)); return false; } };
+  const s0 = await readSession();
+  lines.push(s0 ? `Session file found · profile ${s0.profile || 1} (${s0.profileName || "?"}) · iCloud ${cloud ? "on" : "off"}` : "❌ No saved session: sign in first");
+  let s = null, data = null;
+  if (s0) await step("Login pass", async () => { s = await liveSession(); return "valid for " + Math.round((s.expires_at - Date.now()) / 60000) + " min"; });
+  if (s) await step("Profiles", async () => { const p = await nuvioReq("/rest/v1/rpc/sync_pull_profiles", undefined, s.access_token); return Array.isArray(p) ? p.map((x) => x.profile_index + "=" + x.name).join(", ") || "none" : JSON.stringify(p).slice(0, 80); });
+  if (s) await step("Watch data", async () => { data = await pullData(s); return `${data.progress.length} in progress, ${data.history.length} watched`; });
+  if (data && data.progress[0]) { const p = data.progress[0]; lines.push(`Latest: ${p.content_id} ${p.content_type} S${p.season}E${p.episode} ${Math.round(p.position / 60000)}/${Math.round(p.duration / 60000)} min · ${new Date(p.last_watched).toLocaleString()}`); }
+  if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
+  if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
+  lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
+  const a = new Alert(); a.title = "Connection check"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
 // ---------- in-app: sign in / profile / sign out ----------
@@ -432,7 +471,7 @@ async function signInFlow() {
 async function main() {
   if (config.runsInWidget) { Script.setWidget(await buildWidget()); Script.complete(); return; }
   let s = await readSession();
-  if (!s) { if (!(await signInFlow())) return Script.complete(); }
+  if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
     a.title = "Nuvio Up Next";
@@ -440,8 +479,10 @@ async function main() {
     a.addAction("Preview widget");
     a.addAction("Switch profile");
     a.addDestructiveAction("Sign out");
+    a.addAction("Check connection");
     a.addCancelAction("Close");
     const i = await a.presentSheet();
+    if (i === 3) { await diagnose(); return Script.complete(); }
     if (i === 1) { try { const live = await liveSession(); await chooseProfile(live); writeSession(live); } catch (e) {} }
     else if (i === 2) {
       try { const live = await liveSession(); await nuvioReq("/auth/v1/logout", {}, live.access_token); } catch (e) {}
