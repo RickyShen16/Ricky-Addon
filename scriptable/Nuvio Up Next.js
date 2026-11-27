@@ -443,7 +443,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v6)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v7)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -491,12 +491,44 @@ const LOGIN_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name=
  function fail(t){setMsg(t,false);document.getElementById("b").disabled=false;}
 </script></body></html>`;
 
-async function signInFlow() {
-  const say = async (title, msg) => { const x = new Alert(); x.title = title; x.message = String(msg); x.addAction("OK"); await x.presentAlert(); };
+const niceSignInError = (e) => {
+  const m = String((e && e.message) || e);
+  return /invalid_credentials|Invalid login/i.test(m)
+    ? "Wrong email or password. (If you normally use Google or Apple to sign in to Nuvio, there's no password on this account yet.)"
+    : /not.confirmed/i.test(m) ? "This email isn't confirmed yet. Check your inbox for Nuvio's email." : m;
+};
+const say = async (title, msg) => { const x = new Alert(); x.title = title; x.message = String(msg); x.addAction("OK"); await x.presentAlert(); };
+const str = (v) => (typeof v === "string" ? v : "");
+
+// Way 1: the normal pop-up. Some iOS versions return nothing from its text boxes; then we use way 2.
+async function alertSignIn() {
+  for (let tries = 0; tries < 3; tries++) {
+    const a = new Alert();
+    a.title = "Sign in to Nuvio (v7)";
+    a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
+    a.addTextField("Email");
+    a.addSecureTextField("Password");
+    a.addAction("Sign in");
+    a.addCancelAction("Cancel");
+    let idx;
+    try { idx = await a.presentAlert(); } catch (e) { return { broken: true }; }
+    if (idx === -1) return { cancelled: true };
+    let email = "", password = "";
+    try { email = str(a.textFieldValue(0)).trim(); password = str(a.textFieldValue(1)); } catch (e) {}
+    if (!email || !password) return { broken: true };
+    try { return { session: await signIn(email, password) }; }
+    catch (e) { await say("Couldn't sign in", niceSignInError(e)); }
+  }
+  return { cancelled: true };
+}
+
+// Way 2: a small sign-in page. The sheet is opened FIRST and the page loaded into it
+// (loading before presenting showed an empty sheet on iOS 26).
+async function webSignIn() {
   const wv = new WebView();
-  await wv.loadHTML(LOGIN_HTML);
   let closed = false;
   const shown = wv.present(false).then(() => { closed = true; return null; });
+  await wv.loadHTML(LOGIN_HTML);
   const waitSubmit = () => wv.evaluateJavaScript(
     // Wrapped so the snippet itself evaluates to undefined: Scriptable rejects a function as a result.
     "(function () { if (window.__queued) { var q = window.__queued; window.__queued = null; completion(q); } else { window.__pending = completion; } })();", true);
@@ -504,21 +536,28 @@ async function signInFlow() {
   while (!closed && !s) {
     const v = await Promise.race([waitSubmit(), shown]);
     if (!v || closed) break;
-    try { s = await signIn(String(v.email || ""), String(v.password || "")); }
-    catch (e) {
-      const m = String((e && e.message) || e);
-      const nice = /invalid_credentials|Invalid login/i.test(m)
-        ? "Wrong email or password. (If you normally use Google or Apple to sign in to Nuvio, there's no password on this account yet.)"
-        : /not.confirmed/i.test(m) ? "This email isn't confirmed yet. Check your inbox for Nuvio's email." : m;
-      try { await wv.evaluateJavaScript("fail(" + JSON.stringify(nice) + "); null;"); } catch (x) {}
-    }
+    try { s = await signIn(str(v.email), str(v.password)); }
+    catch (e) { try { await wv.evaluateJavaScript("fail(" + JSON.stringify(niceSignInError(e)) + "); null;"); } catch (x) {} }
+  }
+  if (s) {
+    try { await wv.evaluateJavaScript("setMsg(" + JSON.stringify("✓ Signed in. Close this page (top-left) to continue.") + ", true); null;"); } catch (x) {}
+    await shown;
+  }
+  return s;
+}
+
+async function signInFlow() {
+  const r = await alertSignIn();
+  if (r.cancelled) return false;
+  let s = r.session || null;
+  if (!s && r.broken) {
+    s = await webSignIn();
+    if (!s) await say("Not signed in", "The sign-in page was closed before signing in. If it showed up blank, screenshot this and send it to Claude.");
   }
   if (!s) return false;
   // Save the login FIRST, so a later hiccup (profiles) never throws it away.
   s.profile = 1; s.profileName = "Main";
   const w1 = writeSession(s);
-  try { await wv.evaluateJavaScript("setMsg(" + JSON.stringify("✓ Signed in. Close this page (top-left) to continue.") + ", true); null;"); } catch (x) {}
-  await shown;
   if (!w1.ok) { await say("Signed in, but couldn't save the login", w1.errs.join("\n")); return false; }
   try { await chooseProfile(s); writeSession(s); }
   catch (e) { await say("Signed in ✓", "Couldn't load your Nuvio profiles, so using profile 1.\n\n" + (e.detail || e.message || e)); }
@@ -532,7 +571,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v6)";
+    a.title = "Nuvio Up Next (v7)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
