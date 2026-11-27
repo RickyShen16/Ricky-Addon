@@ -37,25 +37,37 @@ let cloud = null;
 try { cloud = FileManager.iCloud(); } catch (e) { cloud = null; }
 const pathIn = (fm, name) => fm.joinPath(fm.documentsDirectory(), name);
 
+// The login is kept in three places: Scriptable's Keychain (main copy on this device), a local
+// file, and Scriptable's iCloud folder (so the Mac's Scriptable can use it). Reads take the NEWEST
+// valid copy; a broken or empty copy is skipped instead of ending the search.
+const KC_KEY = "nuvio-session";
+const valid = (o) => (o && typeof o === "object" && o.refresh_token ? o : null);
+const parse = (t) => { try { return valid(JSON.parse(t)); } catch (e) { return null; } };
 async function readSession() {
-  for (const fm of [cloud, local]) {
+  const found = [];
+  try { if (Keychain.contains(KC_KEY)) found.push(parse(Keychain.get(KC_KEY))); } catch (e) {}
+  for (const fm of [local, cloud]) {
     if (!fm) continue;
-    const p = pathIn(fm, SESSION_FILE);
     try {
+      const p = pathIn(fm, SESSION_FILE);
       if (!fm.fileExists(p)) continue;
-      if (fm === cloud && fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(p) && fm.downloadFileFromiCloud) await fm.downloadFileFromiCloud(p);
-      return JSON.parse(fm.readString(p));
+      if (fm === cloud) { try { await fm.downloadFileFromiCloud(p); } catch (e) {} }
+      found.push(parse(fm.readString(p)));
     } catch (e) {}
   }
-  return null;
+  const ok = found.filter(Boolean).sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
+  return ok[0] || null;
 }
 function writeSession(s) {
+  s.saved_at = Date.now();
   const txt = JSON.stringify(s); let ok = 0; const errs = [];
-  for (const fm of [cloud, local]) { if (!fm) continue; try { fm.writeString(pathIn(fm, SESSION_FILE), txt); ok++; } catch (e) { errs.push((fm === cloud ? "iCloud: " : "phone: ") + (e.message || e)); } }
+  try { Keychain.set(KC_KEY, txt); ok++; } catch (e) { errs.push("Keychain: " + (e.message || e)); }
+  for (const fm of [local, cloud]) { if (!fm) continue; try { fm.writeString(pathIn(fm, SESSION_FILE), txt); ok++; } catch (e) { errs.push((fm === cloud ? "iCloud: " : "phone: ") + (e.message || e)); } }
   return { ok, errs };
 }
 function clearSession() {
-  for (const fm of [cloud, local]) { if (!fm) continue; try { const p = pathIn(fm, SESSION_FILE); if (fm.fileExists(p)) fm.remove(p); } catch (e) {} }
+  try { if (Keychain.contains(KC_KEY)) Keychain.remove(KC_KEY); } catch (e) {}
+  for (const fm of [local, cloud]) { if (!fm) continue; try { const p = pathIn(fm, SESSION_FILE); if (fm.fileExists(p)) fm.remove(p); } catch (e) {} }
 }
 function readLocal(name) { try { const p = pathIn(local, name); return local.fileExists(p) ? JSON.parse(local.readString(p)) : null; } catch (e) { return null; } }
 function writeLocal(name, obj) { try { local.writeString(pathIn(local, name), JSON.stringify(obj)); } catch (e) {} }
@@ -431,7 +443,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v4)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -451,7 +463,7 @@ async function chooseProfile(s) {
 
 async function signInFlow() {
   const a = new Alert();
-  a.title = "Sign in to Nuvio";
+  a.title = "Sign in to Nuvio (v4)";
   a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
   a.addTextField("Email");
   a.addSecureTextField("Password");
@@ -485,7 +497,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next";
+    a.title = "Nuvio Up Next (v4)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
