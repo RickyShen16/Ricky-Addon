@@ -856,8 +856,9 @@ async function drawReel(c) {
 async function drawShatter(c) {
   const ctx = xlCtx("#050304"), info = heroInfo(c); await xlImages(c);
   const rows = (c.rows || []).slice(0, 3);
-  const B = [0, 352]; for (let i = 0; i < rows.length; i++) B.push(352 + (i + 1) * ((XW - 352) / rows.length)); B[B.length - 1] = XW;
-  const SL = 22;
+  const HP = rows.length >= 3 ? 322 : 352;
+  const B = [0, HP]; for (let i = 0; i < rows.length; i++) B.push(HP + (i + 1) * ((XW - HP) / rows.length)); B[B.length - 1] = XW;
+  const SL = 18;
   const imgs = [c._bd || c._poster].concat(rows.map((r) => r._bd || r._img));
   const pcts = [barPct(c, info)].concat(rows.map((r) => r.pct || 0));
   const levels = [];
@@ -879,7 +880,9 @@ async function drawShatter(c) {
     rrect(ctx, x0, ly - 1, x1 - x0, 2, 0, col(ACCENT));
     vgrad(ctx, x0, x1, ly, Math.min(XH, ly + 14), ACCENT, 0.28, 0);
     const tag = `${Math.round(p * 100)}%`, tw = estW(tag, 9, 0.62) + 12;
-    const tx = x1 - (i === B.length - 2 ? 14 : 22) - tw, ty = ly < 30 ? ly + 6 : ly - 22;
+    const ty = ly < 30 ? ly + 6 : ly - 22, gwT = SL / 2 + 6, offT = SL / 2 - (SL * (ty + 16)) / XH;
+    const rEdge = i === B.length - 2 ? XW - 12 : x1 + offT - gwT - 10;
+    const tx = rEdge - tw;
     rrect(ctx, tx, ty, tw, 16, 8, col(ACCENT)); text(ctx, tag, tx, ty + 2, tw, Font.heavySystemFont(9), col("#ffffff"), "center");
   }
   // gutters
@@ -891,7 +894,7 @@ async function drawShatter(c) {
   // hero panel text
   rrect(ctx, 24, 25, 7, 7, 3.5, col(ACCENT));
   text(ctx, info.kick, 37, 21, 260, Font.boldSystemFont(10), col("#ffffff", 0.85));
-  await drawLogo(ctx, c, 24, 50, 260, 80, 54);
+  await drawLogo(ctx, c, 24, 50, Math.min(260, HP - 60), 80, 54);
   text(ctx, fit(subLine(c, info), 12.5, 290, 0.55), 24, 142, 310, Font.semiboldSystemFont(12.5), col("#ffffff", 0.92));
   if (c.type === "series" && info.upNext) {
     const n = c.seasonEpisodes && c.seasonEpisodes <= 30 ? c.seasonEpisodes : null;
@@ -899,14 +902,21 @@ async function drawShatter(c) {
     if (n) { const seen = new Set(c.seen || []), gap = 3, tw = (290 - gap * (n - 1)) / n; for (let i = 1; i <= n; i++) rrect(ctx, 24 + (i - 1) * (tw + gap), 306 - (i === c.showEpisode ? 3 : 0), tw, i === c.showEpisode ? 10 : 5, 1.5, i === c.showEpisode ? col(ACCENT) : seen.has(i) ? col("#ffffff", 0.9) : col("#ffffff", 0.2)); }
   } else {
     text(ctx, leftText(c, info) || " ", 24, 282, 300, Font.heavySystemFont(15), col("#ffffff"));
-    barcode(ctx, 24, 324, 290, barPct(c, info), 54);
+    barcode(ctx, 24, 324, HP - 62, barPct(c, info), 50);
   }
-  // other panels: number tag, title + line at the bottom
+  // other panels: number tag, title + line at the bottom.
+  // The gutters slant (right at the top, left at the bottom), so the free space depends on height.
+  const gw = SL / 2 + 6, off = (y) => SL / 2 - (SL * y) / XH;
+  const span = (pi, y) => {
+    const L = pi === 0 ? 0 : B[pi] + off(y) + gw, R = pi === B.length - 2 ? XW : B[pi + 1] + off(y) - gw;
+    return [L, R];
+  };
   rows.forEach((r, i) => {
-    const x0 = B[i + 1] + 18, w = B[i + 2] - B[i + 1] - 34;
+    const [L1, R1] = span(i + 1, 310), [L0] = span(i + 1, 286);
+    const x0 = Math.max(L0, L1) + 9, w = R1 - x0 - 8;
     text(ctx, String(i + 2).padStart(2, "0"), x0, 22, 40, Font.boldSystemFont(10), col(ACCENT));
-    text(ctx, fit(r.title.toUpperCase(), 12, w, 0.64), x0, 286, w + 40, Font.heavySystemFont(12), col("#ffffff"));
-    text(ctx, fit(r.line, 9.5, w, 0.52), x0, 304, w + 40, Font.mediumSystemFont(9.5), col("#ffffff", 0.65));
+    text(ctx, fit(r.title.toUpperCase(), 11.5, w, 0.64), x0, 286, w + 40, Font.heavySystemFont(11.5), col("#ffffff"));
+    text(ctx, fit(r.line, 9, w, 0.5), x0, 303, w + 40, Font.mediumSystemFont(9), col("#ffffff", 0.65));
   });
   text(ctx, clock(), XW - 24 - 200, XH - 24, 200, Font.boldSystemFont(8.5), col("#ffffff", 0.4), "right");
   return ctx.getImage();
@@ -1057,7 +1067,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v9)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v10)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1118,7 +1128,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v9)";
+    a.title = "Sign in to Nuvio (v10)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1185,7 +1195,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v9)";
+    a.title = "Nuvio Up Next (v10)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
