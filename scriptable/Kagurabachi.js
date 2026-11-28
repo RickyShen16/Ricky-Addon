@@ -27,6 +27,7 @@ const GLASS_SAFE = true;
 // Small home widget look: "eyes" (Chihiro's eyes + katana, from the official art) | "ink" (type-led, red ink)
 // | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
 // | "kingyo" (drawn goldfish circling the number) | "wave" (seigaiha wave pattern + katana slash)
+// | "koi" (orange/white/blue goldfish streaming through night water) | "asanoha" (hemp-leaf pattern + eclipse)
 const SMALL_STYLE = "rotate";
 
 // ---------- storage ----------
@@ -247,7 +248,98 @@ async function drawSmallWave(d) {
   return ctx.getImage();
 }
 
+// deterministic "random" so the picture doesn't jump around between refreshes
+const rnd = (i) => { const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+
+// A calico goldfish: white body with orange patches, sheer blue-white tail. `pal` picks the colouring.
+function calico(ctx, cx, cy, ang, sc, pal) {
+  const R = (x, y) => new Point(cx + (x * Math.cos(ang) - y * Math.sin(ang)) * sc, cy + (x * Math.sin(ang) + y * Math.cos(ang)) * sc);
+  const shape = (pts, color) => { const p = new Path(); p.move(R(...pts[0])); for (let i = 1; i < pts.length; i += 3) p.addCurve(R(...pts[i + 2]), R(...pts[i]), R(...pts[i + 1])); p.closeSubpath(); ctx.addPath(p); ctx.setFillColor(color); ctx.fillPath(); };
+  const dot = (x, y, r, c) => { const q = R(x, y); circle(ctx, q.x, q.y, r * sc, c); };
+  const P = {
+    calico: { body: "#f6f1ea", patch: "#ff7a2f", tail: "#d9ecff", tailA: 0.55, ray: "#8fc3ff" },
+    orange: { body: "#ff7a2f", patch: "#ffb26b", tail: "#ffc08a", tailA: 0.6, ray: "#ffffff" },
+    blue:   { body: "#9fd2ff", patch: "#ffffff", tail: "#b9e0ff", tailA: 0.45, ray: "#ffffff" },
+  }[pal];
+  // long veil tail (two lobes) + rays
+  shape([[-7, 0], [-16, -2], [-26, -16], [-33, -13], [-27, -6], [-26, 0], [-17, -1]], col(P.tail, P.tailA));
+  shape([[-7, 0], [-16, 2], [-26, 16], [-33, 13], [-27, 6], [-26, 0], [-17, 1]], col(P.tail, P.tailA));
+  for (const yy of [-9, -4, 4, 9]) { const a = R(-9, yy * 0.2), b = R(-29, yy); const l = new Path(); l.move(a); l.addLine(b); ctx.addPath(l); ctx.setStrokeColor(col(P.ray, 0.35)); ctx.setLineWidth(0.5 * sc); ctx.strokePath(); }
+  // fins
+  shape([[1, -5], [-2, -12], [-7, -13], [-6, -9], [-5, -7], [-3, -6], [-1, -5]], col(P.tail, P.tailA + 0.15));
+  shape([[1, 5], [-1, 9], [-5, 11], [-5, 8], [-4, 7], [-2, 6], [0, 5]], col(P.tail, P.tailA + 0.15));
+  // body + patches
+  shape([[10, 0], [9, -7], [-2, -7.5], [-9, -1], [-11, -0.5], [-11, 0.5], [-9, 1], [-2, 7.5], [9, 7], [10, 0]], col(P.body));
+  dot(4, -2.5, 3.2, col(P.patch)); dot(-3, 1.5, 3.6, col(P.patch)); dot(-7, -2, 1.8, col(P.patch, 0.9));
+  dot(6, -1.6, 1.1, col("#0b0f1a")); dot(3.5, -4, 1.2, col("#ffffff", 0.6));
+}
+async function drawSmallKoi(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc;
+  // night water: indigo, lighter toward the top-right where the light falls
+  for (let r = 240; r > 0; r -= 6) circle(ctx, 150, 10, r, col("#16305e", 0.05));
+  ctx.setFillColor(col("#050a18", 0.35)); ctx.fillRect(new Rect(0, 0, S, S));
+  // caustics: soft light patches
+  for (let i = 0; i < 26; i++) { const x = rnd(i) * S, y = rnd(i + 50) * 120, r = 3 + rnd(i + 99) * 9; circle(ctx, x, y, r, col("#9fd2ff", 0.035 + rnd(i + 7) * 0.03)); }
+  // ripples where the fish break the surface
+  for (const [x, y, r] of [[118, 30, 10], [118, 30, 17], [118, 30, 25]]) circle(ctx, x, y, r, col("#bfe3ff", 0.12), false, 0.7);
+  // a stream of goldfish curving up from the bottom-right, each facing along the curve
+  const B = (t) => { const p0 = [150, 168], p1 = [172, 104], p2 = [128, 52], p3 = [92, -6]; const u = 1 - t;
+    return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]; };
+  const fish = [[0.34, 1.05, "calico", -14], [0.48, 0.8, "blue", 4], [0.6, 0.95, "orange", -18], [0.74, 0.8, "calico", 6], [0.88, 0.72, "blue", -10]];
+  for (const [t, k, pal, off] of fish) {
+    const [x, y] = B(t), [x2, y2] = B(Math.min(1, t + 0.02)), a = Math.atan2(y2 - y, x2 - x);
+    calico(ctx, x + off * Math.cos(a + Math.PI / 2), y + off * Math.sin(a + Math.PI / 2), a, k, pal);
+  }
+  // bubbles
+  for (let i = 0; i < 9; i++) circle(ctx, 60 + rnd(i + 3) * 100, 20 + rnd(i + 11) * 90, 1 + rnd(i + 5) * 1.8, col("#d9ecff", 0.35), false, 0.6);
+  vgrad(ctx, 0, S, 112, S, "#050a18", 0, 0.92);
+  rr(ctx, 12, 15, 6, 6, 3, col("#ff7a2f"));
+  txt(ctx, "KAGURABACHI", 22, 12, 120, Font.heavySystemFont(9), col("#ffffff", 0.92));
+  if (sc.isNew) { rr(ctx, S - 12 - 34, 11, 34, 15, 7.5, col("#ff7a2f")); txt(ctx, "NEW", S - 12 - 34, 13, 34, Font.heavySystemFont(8.5), col("#ffffff"), "center"); }
+  txt(ctx, "CHAPTER", 14, 40, 80, Font.heavySystemFont(7.5), col("#9fd2ff"));
+  txt(ctx, String(sc.last.num), 10, 46, 120, COND(46), col("#ffffff"));
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), 14, 100, 90, Font.heavySystemFont(8), col("#ffffff", 0.55));
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
+// ASANOHA: hemp-leaf pattern in thin gold on deep crimson, a black eclipse with a red rim behind the number
+async function drawSmallAsanoha(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc;
+  for (let y = 0; y < S; y++) { const t = y / S; ctx.setFillColor(col("#5c0c0a", 1 - t * 0.65)); ctx.fillRect(new Rect(0, y, S, 1)); }
+  // triangle grid; every triangle gets its edges + spokes from its centre to the corners (the hemp-leaf star)
+  const a = 24, h = a * Math.sqrt(3) / 2, segs = [];
+  for (let j = -1; j * h < S + h; j++) for (let i = -2; i * a < S + a * 2; i++) {
+    const x0 = i * a + (j % 2 ? a / 2 : 0), y0 = j * h;
+    for (const up of [true, false]) {
+      const t = up ? [[x0, y0 + h], [x0 + a, y0 + h], [x0 + a / 2, y0]] : [[x0 + a / 2, y0], [x0 + a * 1.5, y0], [x0 + a, y0 + h]];
+      const c = [(t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3];
+      for (let k = 0; k < 3; k++) { segs.push([t[k], t[(k + 1) % 3]]); segs.push([c, t[k]]); }
+    }
+  }
+  const path = new Path(); for (const [p, q] of segs) { path.move(new Point(p[0], p[1])); path.addLine(new Point(q[0], q[1])); }
+  ctx.addPath(path); ctx.setStrokeColor(col("#e8c27a", 0.32)); ctx.setLineWidth(0.7); ctx.strokePath();
+  // fade the pattern out toward the bottom
+  vgrad(ctx, 0, S, 70, S, BG, 0, 0.95);
+  // eclipse: black disc with a thin red ring + glow, behind the number
+  const ex = 112, ey = 66;
+  for (let r = 58; r > 46; r -= 2) circle(ctx, ex, ey, r, col(ACCENT, 0.05));
+  circle(ctx, ex, ey, 45, col("#0a0304")); circle(ctx, ex, ey, 45, col(ACCENT), false, 2);
+  circle(ctx, ex - 6, ey + 4, 43, col("#ffffff", 0.06), false, 0.8);
+  // a thin vertical katana line through the eclipse
+  rr(ctx, ex + 30, 6, 1.6, 112, 0.8, col("#ffffff", 0.85)); rr(ctx, ex + 31.6, 6, 0.8, 112, 0.4, col(ACCENT));
+  rr(ctx, ex + 26, 22, 10, 3, 1, col("#e8c27a"));
+  smallKicker(ctx, sc, S);
+  txt(ctx, "CH", ex - 40, ey - 31, 80, Font.heavySystemFont(8), col(ACCENT), "center");
+  txt(ctx, String(sc.last.num), ex - 60, ey - 24, 120, COND(40), col("#ffffff"), "center");
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), ex - 50, ey + 22, 100, Font.heavySystemFont(7.5), col("#ffffff", 0.55), "center");
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
 async function drawSmall(d) {
+  if (SMALL_STYLE === "koi") return drawSmallKoi(d);
+  if (SMALL_STYLE === "asanoha") return drawSmallAsanoha(d);
   if (SMALL_STYLE === "kingyo") return drawSmallKingyo(d);
   if (SMALL_STYLE === "wave") return drawSmallWave(d);
   if (SMALL_STYLE === "eyes" && d.art.banner) return drawSmallEyes(d);
