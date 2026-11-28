@@ -28,6 +28,7 @@ const GLASS_SAFE = true;
 // | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
 // | "kingyo" (drawn goldfish circling the number) | "wave" (seigaiha wave pattern + katana slash)
 // | "koi" (orange/white/blue goldfish streaming through night water) | "asanoha" (hemp-leaf pattern + eclipse)
+// | "koislash" (Koi + seigaiha waves + a katana slash through the water)
 // | "kingyo2" (vol. 11 cover style: fat vermilion/white kingyo, water droplets, red logo, katana hilt)
 const SMALL_STYLE = "koi";
 
@@ -274,6 +275,58 @@ function calico(ctx, cx, cy, ang, sc, pal) {
   dot(4, -2.5, 3.2, col(P.patch)); dot(-3, 1.5, 3.6, col(P.patch)); dot(-7, -2, 1.8, col(P.patch, 0.9));
   dot(6, -1.6, 1.1, col("#0b0f1a")); dot(3.5, -4, 1.2, col("#ffffff", 0.6));
 }
+// red katakana logo with the English name underneath
+function logoBlock(ctx) {
+  txt(ctx, "カグラバチ", 12, 9, 130, Font.heavySystemFont(14.5), col("#ec4524"));
+  txt(ctx, "K A G U R A B A C H I", 13, 28, 130, Font.heavySystemFont(6.5), col("#ffffff", 0.75));
+}
+// the shared night-water + goldfish stream (Koi), so both fish designs match
+function koiWater(ctx, S) {
+  for (let r = 240; r > 0; r -= 6) circle(ctx, 150, 10, r, col("#16305e", 0.05));
+  ctx.setFillColor(col("#050a18", 0.35)); ctx.fillRect(new Rect(0, 0, S, S));
+  for (let i = 0; i < 26; i++) { const x = rnd(i) * S, y = rnd(i + 50) * 120, r = 3 + rnd(i + 99) * 9; circle(ctx, x, y, r, col("#9fd2ff", 0.035 + rnd(i + 7) * 0.03)); }
+}
+function koiStream(ctx, fish) {
+  const B = (t) => { const p0 = [150, 168], p1 = [172, 104], p2 = [128, 52], p3 = [92, -6]; const u = 1 - t;
+    return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]; };
+  for (const [t, k, pal, off] of fish) {
+    const [x, y] = B(t), [x2, y2] = B(Math.min(1, t + 0.02)), a = Math.atan2(y2 - y, x2 - x);
+    calico(ctx, x + off * Math.cos(a + Math.PI / 2), y + off * Math.sin(a + Math.PI / 2), a, k, pal);
+  }
+}
+// KOI × SLASH: Koi's water and fish, seigaiha waves rippling in pale blue, and a katana cut through the water
+async function drawSmallKoiSlash(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc;
+  koiWater(ctx, S);
+  // seigaiha in pale blue, strongest on the right, fading out to the left/bottom
+  const r = 13;
+  for (let row = 0, y = -r; y < S + r; row++, y += r / 2)
+    for (let x = (row % 2) * r - r; x < S + r * 2; x += r * 2) {
+      const fade = Math.max(0, Math.min(1, (x - 40) / 110)) * Math.max(0, 1 - y / 190);
+      if (fade < 0.05) continue;
+      circle(ctx, x, y, r, col("#0a1430", 0.9 * fade));
+      for (let k = 0; k < 3; k++) circle(ctx, x, y, r - k * 3.8, col("#9fd2ff", (0.24 - k * 0.05) * fade), false, 0.9);
+    }
+  // the slash: white blade, red edge, faint glow, cutting down-left through the water
+  const A = [S + 8, 78], Z = [40, 132];
+  const band = (o, w, c) => poly(ctx, [[A[0], A[1] + o], [A[0], A[1] + o + w], [Z[0] - 8, Z[1] + o + w * 0.3], [Z[0] - 8, Z[1] + o]], c);
+  band(-4, 10, col("#ec4524", 0.22)); band(0, 2.8, col("#ffffff", 0.95)); band(2.8, 1.4, col("#ec4524"));
+  // spray along the cut
+  for (let i = 0; i < 14; i++) { const t = rnd(i + 700), x = A[0] + (Z[0] - A[0]) * t, y = A[1] + (Z[1] - A[1]) * t, o = (rnd(i + 720) - 0.5) * 18;
+    circle(ctx, x + o * 0.6, y + o, 0.7 + rnd(i + 740) * 1.6, col("#ffffff", 0.75)); }
+  // goldfish swim over the cut
+  koiStream(ctx, [[0.3, 1.0, "calico", -14], [0.46, 0.8, "blue", 4], [0.6, 0.95, "orange", -18], [0.74, 0.8, "calico", 6], [0.88, 0.72, "blue", -10]]);
+  for (let i = 0; i < 7; i++) circle(ctx, 70 + rnd(i + 3) * 90, 30 + rnd(i + 11) * 80, 1 + rnd(i + 5) * 1.6, col("#d9ecff", 0.35), false, 0.6);
+  vgrad(ctx, 0, S, 118, 136, "#050a18", 0, 0.85); ctx.setFillColor(col("#050a18", 0.88)); ctx.fillRect(new Rect(0, 136, S, S - 136));
+  logoBlock(ctx);
+  if (sc.isNew) { rr(ctx, S - 12 - 34, 11, 34, 15, 7.5, col("#ec4524")); txt(ctx, "NEW", S - 12 - 34, 13, 34, Font.heavySystemFont(8.5), col("#ffffff"), "center"); }
+  txt(ctx, "CHAPTER", 14, 48, 80, Font.heavySystemFont(7.5), col("#9fd2ff"));
+  txt(ctx, String(sc.last.num), 10, 54, 120, COND(44), col("#ffffff"));
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), 14, 106, 90, Font.heavySystemFont(8), col("#ffffff", 0.55));
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
 async function drawSmallKoi(d) {
   const S = 170, ctx = ctxOf(S, S), sc = d.sc;
   // night water: indigo, lighter toward the top-right where the light falls
@@ -294,11 +347,11 @@ async function drawSmallKoi(d) {
   // bubbles
   for (let i = 0; i < 9; i++) circle(ctx, 60 + rnd(i + 3) * 100, 20 + rnd(i + 11) * 90, 1 + rnd(i + 5) * 1.8, col("#d9ecff", 0.35), false, 0.6);
   vgrad(ctx, 0, S, 112, S, "#050a18", 0, 0.92);
-  txt(ctx, "カグラバチ", 12, 10, 130, Font.heavySystemFont(14.5), col("#ec4524"));   // the red logo, like the covers
+  logoBlock(ctx);
   if (sc.isNew) { rr(ctx, S - 12 - 34, 11, 34, 15, 7.5, col("#ff7a2f")); txt(ctx, "NEW", S - 12 - 34, 13, 34, Font.heavySystemFont(8.5), col("#ffffff"), "center"); }
-  txt(ctx, "CHAPTER", 14, 40, 80, Font.heavySystemFont(7.5), col("#9fd2ff"));
-  txt(ctx, String(sc.last.num), 10, 46, 120, COND(46), col("#ffffff"));
-  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), 14, 100, 90, Font.heavySystemFont(8), col("#ffffff", 0.55));
+  txt(ctx, "CHAPTER", 14, 48, 80, Font.heavySystemFont(7.5), col("#9fd2ff"));
+  txt(ctx, String(sc.last.num), 10, 54, 120, COND(44), col("#ffffff"));
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), 14, 106, 90, Font.heavySystemFont(8), col("#ffffff", 0.55));
   smallFooter(ctx, sc, S);
   return ctx.getImage();
 }
@@ -400,6 +453,7 @@ async function drawSmallKingyo2(d) {
 }
 
 async function drawSmall(d) {
+  if (SMALL_STYLE === "koislash") return drawSmallKoiSlash(d);
   if (SMALL_STYLE === "kingyo2") return drawSmallKingyo2(d);
   if (SMALL_STYLE === "koi") return drawSmallKoi(d);
   if (SMALL_STYLE === "asanoha") return drawSmallAsanoha(d);
