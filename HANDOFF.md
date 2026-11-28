@@ -37,7 +37,13 @@ cd ~/Downloads && rm -rf Ricky-Addon-claude-simkl-radar-widget-cvmugs simkl.zip 
 The user moved tracking from Simkl to **Nuvio**, using Nuvio's official public API (`docs/nuvio-api-notes.md`).
 - Done: `scriptable/Nuvio Up Next.js` (iPhone medium). Session lives in `nuvio-session.json`, written to Scriptable iCloud and local. Every Nuvio widget should reuse it.
   Refresh tokens rotate, so always save the new one.
-- Next, one at a time with previews first: Mac extra large, then the lock-screen widgets.
+- **One script, every size:** `Nuvio Up Next.js` (named "SimKl Medium" on the user's phone) checks `config.widgetFamily`.
+  - Medium draws `LAYOUT = "slash"`: diagonal cut, ticket barcode progress, "Also watching" list.
+  - Extra Large on the Mac (via iCloud) draws `XL_LAYOUT = "shatter"`: manga panels with fill-level progress.
+  - Ratings: IMDb via Cinemeta, falling back to TMDB.
+- v11 `GLASS_SAFE`: the artwork is added as content (`addImage`), not `backgroundImage`, because iOS 26 Clear/Tinted drops widget backgrounds (blank widget). Waiting on the user's on-device result.
+  - If it works, apply the same fix to the manga widgets.
+- Still to do: a square Large layout (if wanted), the lock-screen widgets on Nuvio, and the manga widgets.
   Ideas the user liked: live "Now Playing" via tracking events on this repo's addon, and a stats card.
 - Preview: render with the browser shim (scratchpad `nv/run.mjs` pattern), using Nuvio fixtures and real TMDB.
 
