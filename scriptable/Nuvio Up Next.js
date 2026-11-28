@@ -1021,6 +1021,19 @@ const deepLink = (c) => {
 };
 
 // ---------- widget ----------
+// iOS 26 Clear/Tinted home screens remove a widget's BACKGROUND entirely (blank widget).
+// Content survives (iOS recolours it), so the artwork goes in as a full-bleed content image.
+// Set to false to go back to a plain background image.
+const GLASS_SAFE = true;
+function setArt(w, img) {
+  if (!GLASS_SAFE) { w.backgroundImage = img; return; }
+  w.setPadding(0, 0, 0, 0);
+  const wi = w.addImage(img);
+  wi.resizable = true;
+  wi.applyFillingContentMode();
+  wi.centerAlignImage();
+}
+
 async function buildWidget() {
   const w = new ListWidget();
   w.setPadding(0, 0, 0, 0);
@@ -1039,16 +1052,16 @@ async function buildWidget() {
     if (e.auth) w.url = `scriptable:///run/${encodeURIComponent(Script.name() || SCRIPT_NAME)}`;
   }
   try {
-    if (problem) w.backgroundImage = messageCard(problem[0], problem[1]);
+    if (problem) setArt(w, messageCard(problem[0], problem[1]));
     else {
       const hasRows = card.rows && card.rows.length;
-      if (IS_XL) { const xd = XL_LAYOUT === "reel" ? drawReel : XL_LAYOUT === "shatter" ? drawShatter : drawRadar; w.backgroundImage = await xd(card); w.url = deepLink(card); return w; }
+      if (IS_XL) { const xd = XL_LAYOUT === "reel" ? drawReel : XL_LAYOUT === "shatter" ? drawShatter : drawRadar; setArt(w, await xd(card)); w.url = deepLink(card); return w; }
       const draw = LAYOUT === "classic" ? drawClassic : LAYOUT === "slash" ? drawSlash : LAYOUT === "ticket" ? drawTicket
         : LAYOUT === "shelf" ? drawShelf : LAYOUT === "split" && hasRows ? drawSplit : drawCard;
-      w.backgroundImage = await draw(card); w.url = deepLink(card);
+      setArt(w, await draw(card)); w.url = deepLink(card);
     }
   } catch (e) {
-    w.backgroundImage = messageCard("Widget error", String(e.message || e).slice(0, 120));
+    setArt(w, messageCard("Widget error", String(e.message || e).slice(0, 120)));
   }
   return w;
 }
@@ -1067,7 +1080,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v10)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v11)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1128,7 +1141,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v10)";
+    a.title = "Sign in to Nuvio (v11)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1195,7 +1208,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v10)";
+    a.title = "Nuvio Up Next (v11)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
