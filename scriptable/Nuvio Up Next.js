@@ -28,7 +28,7 @@ const ACCENT = "#ff4b3e";
 // "shelf"   = logo + big % on top, a row of posters (current one highlighted) along the bottom
 const LAYOUT = "slash";
 // Extra large (Mac desktop / iPad): "reel" | "shatter" | "radar"
-const XL_LAYOUT = "radar";
+const XL_LAYOUT = "shatter";
 const FAMILY = config.runsInWidget ? config.widgetFamily : (Device.isPhone() ? "medium" : "extraLarge");
 const IS_XL = FAMILY === "extraLarge" || FAMILY === "large";
 
@@ -139,6 +139,17 @@ async function tmdb(path, ttlHours = 12) {
   } catch (e) {}
   return hit ? hit.d : null;
 }
+async function imdbRating(tt, type) {
+  const cache = readLocal("nuvio-imdb-cache.json") || {}, hit = cache[tt];
+  if (hit && Date.now() - hit.t < 24 * 3600e3) return hit.v;
+  try {
+    const j = await new Request(`https://v3-cinemeta.strem.io/meta/${type}/${tt}.json`).loadJSON();
+    const v = j && j.meta && parseFloat(j.meta.imdbRating);
+    cache[tt] = { t: Date.now(), v: v > 0 ? v : null }; writeLocal("nuvio-imdb-cache.json", cache);
+    return v > 0 ? v : null;
+  } catch (e) { return hit ? hit.v : null; }
+}
+const ratingText = (c) => (c.rating ? `${c.ratingSrc || "TMDB"} ${c.rating}` : null);
 const tmdbImg = (size, p) => (p ? `https://image.tmdb.org/t/p/${size}${p}` : null);
 
 // content_id is usually "tmdb:1396"; Stremio-style ids can be "tt0944947".
@@ -214,11 +225,15 @@ async function loadCard(s) {
   const ref = await resolveTmdb(hero.content_id, hero.content_type);
   if (ref) {
     card.tmdb = ref.id;
-    const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images&include_image_language=en,null`);
+    const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images,external_ids&include_image_language=en,null`);
     if (d) {
       card.title = d.name || d.title || card.title;
       card.year = (d.first_air_date || d.release_date || "").slice(0, 4);
-      card.rating = d.vote_average ? Math.round(d.vote_average * 10) / 10 : null;
+      // Rating: IMDb (via Stremio's public Cinemeta catalogue); TMDB's score if IMDb has none yet.
+      const imdbId = d.imdb_id || (d.external_ids && d.external_ids.imdb_id) || (String(hero.content_id).match(/tt\d+/) || [])[0];
+      const imdb = imdbId ? await imdbRating(imdbId, ref.kind === "movie" ? "movie" : "series") : null;
+      if (imdb) { card.rating = imdb; card.ratingSrc = "IMDb"; }
+      else { card.rating = d.vote_average ? Math.round(d.vote_average * 10) / 10 : null; card.ratingSrc = "TMDB"; }
       card.genre = (d.genres && d.genres[0] && d.genres[0].name) || null;
       card.runtime = d.runtime || (d.episode_run_time && d.episode_run_time[0]) || null;
       const logo = pickLogo(d.images);
@@ -257,7 +272,7 @@ async function loadCard(s) {
     card.showSeason = card.season; card.showEpisode = card.finished ? card.episode + 1 : card.episode;
   }
   if (card.tmdb && (IS_XL || (LAYOUT !== "hero" && LAYOUT !== "split"))) {
-    const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images&include_image_language=en,null`);
+    const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images,external_ids&include_image_language=en,null`);
     card.poster = d && d.poster_path ? tmdbImg("w342", d.poster_path) : null;
   }
   if (IS_XL || LAYOUT !== "hero") card.rows = await buildRows(progress, history, hero.content_id, done, IS_XL ? 6 : 3);
@@ -293,7 +308,7 @@ async function buildRows(progress, history, heroId, done, max = 3) {
     } else { r.line = "Watched " + ago(it.h.watched_at); r.pct = 1; r.when = it.h.watched_at; }
     const ref = await resolveTmdb(x.content_id, x.content_type);
     if (ref) {
-      const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images&include_image_language=en,null`);
+      const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images,external_ids&include_image_language=en,null`);
       if (d) { r.title = d.name || d.title || r.title; r.poster = d.poster_path ? tmdbImg("w185", d.poster_path) : null; r.backdrop = d.backdrop_path ? tmdbImg("w300", d.backdrop_path) : null; }
     }
     if (!r.title) r.title = String(x.content_id);
@@ -403,7 +418,7 @@ async function drawCard(c) {
     const se = c.showSeason != null ? `S${c.showSeason} · E${c.showEpisode}` : "";
     sub = se + (c.epName ? `  ${c.epName}` : "");
   } else {
-    const parts = [c.year, c.runtime ? hm(c.runtime) : null, c.rating ? `★ ${c.rating}` : null, c.genre].filter(Boolean);
+    const parts = [c.year, c.runtime ? hm(c.runtime) : null, ratingText(c), c.genre].filter(Boolean);
     while (parts.length > 1 && estW(parts.join("  ·  "), 11, 0.55) > TW - 6) parts.pop();   // drop facts, don't cut words
     sub = parts.join("  ·  ");
   }
@@ -506,7 +521,7 @@ async function drawSplit(c) {
   }
   let sub;
   if (c.type === "series") sub = info.ep + (c.epName ? `  ${c.epName}` : "");
-  else { const parts = [c.year, c.runtime ? hm(c.runtime) : null, c.rating ? `★ ${c.rating}` : null]; sub = parts.filter(Boolean).join("  ·  "); }
+  else { const parts = [c.year, c.runtime ? hm(c.runtime) : null, ratingText(c)]; sub = parts.filter(Boolean).join("  ·  "); }
   text(ctx, fit(sub, 10.5, 180, 0.55), X, y, 200, Font.semiboldSystemFont(10.5), col("#ffffff", 0.88));
 
   const BY = H - 20, BW = 174;
@@ -631,7 +646,7 @@ async function drawLogo(ctx, c, x, y, maxW, maxH, fallbackFs) {
 }
 function subLine(c, info) {
   if (c.type === "series") return info.ep + (c.epName ? `  ${c.epName}` : "");
-  return [c.year, c.runtime ? hm(c.runtime) : null, c.rating ? `★ ${c.rating}` : null].filter(Boolean).join("  ·  ");
+  return [c.year, c.runtime ? hm(c.runtime) : null, ratingText(c)].filter(Boolean).join("  ·  ");
 }
 const pctText = (c, info) => (info.upNext ? (info.notOut ? `IN ${info.d}D` : `E${c.showEpisode}`) : `${Math.round(info.pct * 100)}%`);
 const barPct = (c, info) => (info.upNext ? (c.seasonEpisodes ? Math.min(1, (c.seen || []).length / c.seasonEpisodes) : 0) : info.pct);
@@ -836,22 +851,37 @@ async function drawReel(c) {
 }
 
 // ---------------- SHATTER: manga panels split by slanted gutters ----------------
+// Progress is a fill level: the watched part of each panel is lit, the rest is dark,
+// and a red line with a small tag marks where you are. No giant numbers.
 async function drawShatter(c) {
   const ctx = xlCtx("#050304"), info = heroInfo(c); await xlImages(c);
   const rows = (c.rows || []).slice(0, 3);
-  const cuts = [0, 352, 478, 604, XW].slice(0, 2 + rows.length).concat(rows.length < 3 ? [XW] : []);
   const B = [0, 352]; for (let i = 0; i < rows.length; i++) B.push(352 + (i + 1) * ((XW - 352) / rows.length)); B[B.length - 1] = XW;
-  const SL = 22;                                    // slant: gutter goes from (m+SL/2, 0) to (m-SL/2, H)
-  // panel images (rectangles meet at m; the slanted gutter hides the seam)
+  const SL = 22;
   const imgs = [c._bd || c._poster].concat(rows.map((r) => r._bd || r._img));
+  const pcts = [barPct(c, info)].concat(rows.map((r) => r.pct || 0));
+  const levels = [];
   for (let i = 0; i < B.length - 1; i++) {
-    const x0 = B[i], x1 = B[i + 1], img = imgs[i];
+    const x0 = B[i], x1 = B[i + 1], img = imgs[i], p = Math.max(0, Math.min(1, pcts[i]));
     if (img) ctx.drawImageInRect(cropTo(img, x1 - x0, XH, 0.3), new Rect(x0, 0, x1 - x0, XH)); else { ctx.setFillColor(col("#21181a")); ctx.fillRect(new Rect(x0, 0, x1 - x0, XH)); }
-    if (i === 0) { hgrad(ctx, x0, x1, 0, XH, "#000000", 0.8, 0.1); vgrad(ctx, x0, x1, 170, XH, "#000000", 0, 0.75); }
-    else { ctx.setFillColor(col("#0a0506", 0.45)); ctx.fillRect(new Rect(x0, 0, x1 - x0, XH)); vgrad(ctx, x0, x1, 150, XH, "#000000", 0, 0.9); }
+    // fill level: dark above the line, lit below it
+    const ly = i === 0 ? 0 : Math.round(XH * (1 - p)); levels.push(ly);   // main panel uses the barcode instead
+    if (i > 0) { ctx.setFillColor(col("#07030a", 0.72)); ctx.fillRect(new Rect(x0, 0, x1 - x0, ly)); }
+    if (i === 0) { hgrad(ctx, x0, x1, 0, XH, "#000000", 0.75, 0); vgrad(ctx, x0, x1, 230, XH, "#000000", 0, 0.55); }
+    else { vgrad(ctx, x0, x1, 0, 120, "#000000", 0.55, 0); vgrad(ctx, x0, x1, 210, XH, "#000000", 0, 0.8); }
   }
   // screentone dots, top-right of the hero panel
-  for (let y = 10; y < 130; y += 9) for (let x = 230; x < 340; x += 9) { const k = ((x - 230) / 110) * (1 - (y - 10) / 120); if (k <= 0.05) continue; const r = 2.4 * k; const e = new Path(); e.addEllipse(new Rect(x - r, y - r, r * 2, r * 2)); ctx.addPath(e); ctx.setFillColor(col("#ffffff", 0.22)); ctx.fillPath(); }
+  for (let y = 10; y < 130; y += 9) for (let x = 230; x < 340; x += 9) { const k = ((x - 230) / 110) * (1 - (y - 10) / 120); if (k <= 0.05) continue; const r = 2.4 * k; const e = new Path(); e.addEllipse(new Rect(x - r, y - r, r * 2, r * 2)); ctx.addPath(e); ctx.setFillColor(col("#ffffff", 0.2)); ctx.fillPath(); }
+  // level lines + tags (drawn before gutters so their ends tuck under the slant)
+  for (let i = 1; i < B.length - 1; i++) {
+    const p = pcts[i]; if (p <= 0.005 || p >= 0.995) continue;
+    const ly = levels[i], x0 = B[i], x1 = B[i + 1];
+    rrect(ctx, x0, ly - 1, x1 - x0, 2, 0, col(ACCENT));
+    vgrad(ctx, x0, x1, ly, Math.min(XH, ly + 14), ACCENT, 0.28, 0);
+    const tag = `${Math.round(p * 100)}%`, tw = estW(tag, 9, 0.62) + 12;
+    const tx = x1 - (i === B.length - 2 ? 14 : 22) - tw, ty = ly < 30 ? ly + 6 : ly - 22;
+    rrect(ctx, tx, ty, tw, 16, 8, col(ACCENT)); text(ctx, tag, tx, ty + 2, tw, Font.heavySystemFont(9), col("#ffffff"), "center");
+  }
   // gutters
   for (let i = 1; i < B.length - 1; i++) {
     const m = B[i], gw = SL / 2 + 6;
@@ -861,24 +891,24 @@ async function drawShatter(c) {
   // hero panel text
   rrect(ctx, 24, 25, 7, 7, 3.5, col(ACCENT));
   text(ctx, info.kick, 37, 21, 260, Font.boldSystemFont(10), col("#ffffff", 0.85));
-  await drawLogo(ctx, c, 24, 48, 250, 70, 50);
-  text(ctx, fit(subLine(c, info), 12, 280, 0.55), 24, 128, 300, Font.semiboldSystemFont(12), col("#ffffff", 0.9));
-  text(ctx, pctText(c, info), 20, 190, 300, COND(112), col("#ffffff"));
-  text(ctx, leftText(c, info), 26, 318, 200, Font.mediumSystemFont(11), col("#ffffff", 0.7));
-  barcode(ctx, 180, 334, 140, barPct(c, info), 34);
-  // other panels: giant ghost number + title
+  await drawLogo(ctx, c, 24, 50, 260, 80, 54);
+  text(ctx, fit(subLine(c, info), 12.5, 290, 0.55), 24, 142, 310, Font.semiboldSystemFont(12.5), col("#ffffff", 0.92));
+  if (c.type === "series" && info.upNext) {
+    const n = c.seasonEpisodes && c.seasonEpisodes <= 30 ? c.seasonEpisodes : null;
+    text(ctx, info.notOut ? `E${c.showEpisode} in ${info.d} day${info.d === 1 ? "" : "s"}` : `Next: E${c.showEpisode}`, 24, 276, 300, Font.heavySystemFont(15), col("#ffffff"));
+    if (n) { const seen = new Set(c.seen || []), gap = 3, tw = (290 - gap * (n - 1)) / n; for (let i = 1; i <= n; i++) rrect(ctx, 24 + (i - 1) * (tw + gap), 306 - (i === c.showEpisode ? 3 : 0), tw, i === c.showEpisode ? 10 : 5, 1.5, i === c.showEpisode ? col(ACCENT) : seen.has(i) ? col("#ffffff", 0.9) : col("#ffffff", 0.2)); }
+  } else {
+    text(ctx, leftText(c, info) || " ", 24, 282, 300, Font.heavySystemFont(15), col("#ffffff"));
+    barcode(ctx, 24, 324, 290, barPct(c, info), 54);
+  }
+  // other panels: number tag, title + line at the bottom
   rows.forEach((r, i) => {
     const x0 = B[i + 1] + 18, w = B[i + 2] - B[i + 1] - 34;
-    const big = r.type === "movie" ? `${Math.round(r.pct * 100)}%` : (r.line.match(/E(\d+)/) ? "E" + r.line.match(/E(\d+)/)[1] : "✓");
-    const bfs = Math.min(64, Math.floor(w / (big.length * 0.5)));
-    text(ctx, big, x0 - 4, 176 + (64 - bfs) * 0.8, w + 40, COND(bfs), col("#ffffff", 0.9));
-    text(ctx, fit(r.title.toUpperCase(), 11, w, 0.62), x0, 264, w + 40, Font.heavySystemFont(11), col("#ffffff"));
-    text(ctx, fit(r.line, 9.5, w, 0.52), x0, 281, w + 40, Font.mediumSystemFont(9.5), col("#ffffff", 0.6));
-    rrect(ctx, x0, 304, w, 3, 1.5, col("#ffffff", 0.18));
-    if (r.pct > 0) rrect(ctx, x0, 304, Math.max(3, w * r.pct), 3, 1.5, r.pct >= 1 ? col("#ffffff", 0.75) : col(ACCENT));
     text(ctx, String(i + 2).padStart(2, "0"), x0, 22, 40, Font.boldSystemFont(10), col(ACCENT));
+    text(ctx, fit(r.title.toUpperCase(), 12, w, 0.64), x0, 286, w + 40, Font.heavySystemFont(12), col("#ffffff"));
+    text(ctx, fit(r.line, 9.5, w, 0.52), x0, 304, w + 40, Font.mediumSystemFont(9.5), col("#ffffff", 0.65));
   });
-  text(ctx, clock(), XW - 24 - 200, XH - 26, 200, Font.boldSystemFont(9), col("#ffffff", 0.4), "right");
+  text(ctx, clock(), XW - 24 - 200, XH - 24, 200, Font.boldSystemFont(8.5), col("#ffffff", 0.4), "right");
   return ctx.getImage();
 }
 
@@ -1027,7 +1057,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v8)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v9)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1088,7 +1118,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v8)";
+    a.title = "Sign in to Nuvio (v9)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1155,7 +1185,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v8)";
+    a.title = "Nuvio Up Next (v9)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
