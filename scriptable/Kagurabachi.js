@@ -26,6 +26,7 @@ const FAMILY = config.runsInWidget ? config.widgetFamily : "large";
 const GLASS_SAFE = true;
 // Small home widget look: "eyes" (Chihiro's eyes + katana, from the official art) | "ink" (type-led, red ink)
 // | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
+// | "kingyo" (drawn goldfish circling the number) | "wave" (seigaiha wave pattern + katana slash)
 const SMALL_STYLE = "rotate";
 
 // ---------- storage ----------
@@ -188,7 +189,67 @@ async function drawSmallRotate(d) {
   return ctx.getImage();
 }
 
+// ---- drawn (no artwork) ----
+function circle(ctx, cx, cy, r, color, fill = true, lw = 1) { const p = new Path(); p.addEllipse(new Rect(cx - r, cy - r, r * 2, r * 2)); ctx.addPath(p); if (fill) { ctx.setFillColor(color); ctx.fillPath(); } else { ctx.setStrokeColor(color); ctx.setLineWidth(lw); ctx.strokePath(); } }
+// A goldfish facing `ang` (radians), drawn from rotated points.
+function goldfish(ctx, cx, cy, ang, sc, body, fin) {
+  const R = (x, y) => new Point(cx + (x * Math.cos(ang) - y * Math.sin(ang)) * sc, cy + (x * Math.sin(ang) + y * Math.cos(ang)) * sc);
+  const shape = (pts, color) => { const p = new Path(); p.move(R(...pts[0])); for (let i = 1; i < pts.length; i += 3) p.addCurve(R(...pts[i + 2]), R(...pts[i]), R(...pts[i + 1])); p.closeSubpath(); ctx.addPath(p); ctx.setFillColor(color); ctx.fillPath(); };
+  // flowing double tail
+  shape([[-6, 0], [-14, -3], [-22, -14], [-27, -11], [-22, -5], [-21, 0], [-15, -1]], fin);
+  shape([[-6, 0], [-14, 3], [-22, 14], [-27, 11], [-22, 5], [-21, 0], [-15, 1]], fin);
+  // fins
+  shape([[1, -4], [-2, -11], [-6, -12], [-5, -9], [-4, -6], [-3, -5], [-1, -4]], fin);
+  shape([[1, 4], [-1, 8], [-4, 10], [-4, 7], [-3, 6], [-2, 5], [0, 4]], fin);
+  // body
+  shape([[10, 0], [9, -7], [-2, -7], [-9, -1], [-11, -0.5], [-11, 0.5], [-9, 1], [-2, 7], [9, 7], [10, 0]], body);
+  const e = R(5, -1.6); circle(ctx, e.x, e.y, 1.1 * sc, col("#120607"));
+  const h = R(2, -3.5); circle(ctx, h.x, h.y, 1.4 * sc, col("#ffffff", 0.35));
+}
+async function drawSmallKingyo(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc, cx = 85, cy = 72;
+  // dark water + ripples
+  for (let r = 96; r > 0; r -= 4) circle(ctx, cx, cy, r, col("#1a0709", 0.06));
+  for (const r of [30, 44, 58, 74]) circle(ctx, cx, cy, r, col(ACCENT, 0.13), false, 0.8);
+  // five goldfish swimming clockwise around the number
+  const fish = [[0, 1.05], [1.25, 0.9], [2.5, 1.1], [3.75, 0.85], [5.0, 1.0]];
+  fish.forEach(([a, k], i) => {
+    const rad = 52 + (i % 2) * 8, x = cx + rad * Math.cos(a), y = cy + rad * Math.sin(a) * 0.82;
+    goldfish(ctx, x, y, a + Math.PI / 2 + 0.25, 0.95 * k, col(i % 2 ? "#ff6a3d" : ACCENT), col(i % 2 ? "#ff8a5c" : "#ff5a4a", 0.6));
+  });
+  smallKicker(ctx, sc, S);
+  txt(ctx, String(sc.last.num), 0, cy - 24, S, COND(40), col("#ffffff"), "center");
+  txt(ctx, "CHAPTER", 0, cy + 22, S, Font.heavySystemFont(7.5), col(ACCENT), "center");
+  vgrad(ctx, 0, S, 120, S, BG, 0, 0.9);
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+async function drawSmallWave(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc;
+  // seigaiha: rows of overlapping fan-circles, each with concentric rings
+  const r = 15;
+  for (let row = 0, y = -r; y < S + r; row++, y += r / 2) {
+    for (let x = (row % 2) * r - r; x < S + r * 2; x += r * 2) {
+      circle(ctx, x, y, r, col(BG));
+      for (let k = 0; k < 4; k++) circle(ctx, x, y, r - k * 3.6, col(ACCENT, 0.42 - k * 0.07), false, 1.1);
+    }
+  }
+  // fade the pattern into black toward the bottom-left, keep it rich top-right
+  for (let y = 0; y < S; y++) { ctx.setFillColor(col(BG, 0.25 + 0.7 * (y / S))); ctx.fillRect(new Rect(0, y, S, 1)); }
+  // katana slash: white blade with a red edge, top-right to lower-left
+  const sl = (o, w, c) => poly(ctx, [[S + 10, 30 + o], [S + 10, 30 + o + w], [-10, 84 + o + w * 0.4], [-10, 84 + o]], c);
+  sl(-3, 9, col(ACCENT, 0.35)); sl(0, 3.2, col("#ffffff", 0.95)); sl(3.2, 1.6, col(ACCENT));
+  smallKicker(ctx, sc, S);
+  txt(ctx, "CH", 14, 92, 30, Font.heavySystemFont(8.5), col(ACCENT));
+  txt(ctx, String(sc.last.num), 11, 98, 120, COND(36), col("#ffffff"));
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), S - 13 - 80, 112, 80, Font.heavySystemFont(8), col("#ffffff", 0.6), "right");
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
 async function drawSmall(d) {
+  if (SMALL_STYLE === "kingyo") return drawSmallKingyo(d);
+  if (SMALL_STYLE === "wave") return drawSmallWave(d);
   if (SMALL_STYLE === "eyes" && d.art.banner) return drawSmallEyes(d);
   if (SMALL_STYLE === "ink") return drawSmallInk(d);
   if (SMALL_STYLE === "rotate" && d.art.vols.length) return drawSmallRotate(d);
