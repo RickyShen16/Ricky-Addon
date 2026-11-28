@@ -24,6 +24,9 @@ const COND = (fs) => new Font("Futura-CondensedExtraBold", fs);
 const FAMILY = config.runsInWidget ? config.widgetFamily : "large";
 // iOS 26 Clear/Tinted home screens drop widget BACKGROUNDS, so the art goes in as content.
 const GLASS_SAFE = true;
+// Small home widget look: "eyes" (Chihiro's eyes + katana, from the official art) | "ink" (type-led, red ink)
+// | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
+const SMALL_STYLE = "eyes";
 
 // ---------- storage ----------
 const fm = FileManager.local();
@@ -123,7 +126,76 @@ function katana(ctx, x, y, w, h, frac, mono = false) {
 }
 
 // ---------- SMALL (home, square) ----------
+// Place image so the point (fx, fy) (fractions of the image) lands at (px, py), scaled to `h` tall.
+function zoomTo(ctx, im, h, fx, fy, px, py, W, H) {
+  const s = h / im.size.height, iw = im.size.width * s, ih = h;
+  const c = new DrawContext(); c.size = new Size(W, H); c.opaque = false; c.respectScreenScale = true;
+  c.drawImageInRect(im, new Rect(px - iw * fx, py - ih * fy, iw, ih));
+  ctx.drawImageInRect(c.getImage(), new Rect(0, 0, W, H));
+}
+function smallFooter(ctx, sc, S) {
+  const label = sc.state === "break" ? "ON BREAK?" : sc.state === "due" ? `CH ${sc.nextNum} DUE` : `NEXT · CH ${sc.nextNum}`;
+  txt(ctx, label, 13, 138, 100, Font.heavySystemFont(8), col("#ffffff", 0.8));
+  txt(ctx, sc.state === "wait" ? countdown(sc.next - Date.now()) : "", S - 13 - 80, 136, 80, COND(11), col(ACCENT), "right");
+  katana(ctx, 13, 155, S - 26, 5, sc.frac);
+}
+function smallKicker(ctx, sc, S) {
+  rr(ctx, 12, 15, 6, 6, 3, col(ACCENT));
+  txt(ctx, "KAGURABACHI", 22, 12, 120, Font.heavySystemFont(9), col("#ffffff", 0.92));
+  if (sc.isNew) { rr(ctx, S - 12 - 34, 11, 34, 15, 7.5, col(ACCENT)); txt(ctx, "NEW", S - 12 - 34, 13, 34, Font.heavySystemFont(8.5), col("#ffffff"), "center"); }
+}
+
+// EYES: Chihiro's eyes + blade, cropped tight from the official banner, red-graded
+async function drawSmallEyes(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc, b = await img(d.art.banner);
+  if (b) zoomTo(ctx, b, 300, 0.565, 0.5, 92, 66, S, S);
+  ctx.setFillColor(col("#3a0503", 0.28)); ctx.fillRect(new Rect(0, 0, S, S));
+  vgrad(ctx, 0, S, 0, 34, BG, 0.85, 0); vgrad(ctx, 0, S, 78, S, BG, 0, 0.97);
+  smallKicker(ctx, sc, S);
+  txt(ctx, "CH", 14, 92, 30, Font.heavySystemFont(8.5), col(ACCENT));
+  txt(ctx, String(sc.last.num), 11, 98, 120, COND(36), col("#ffffff"));
+  txt(ctx, sc.isNew ? "OUT NOW" : ago(sc.last.date), S - 13 - 80, 112, 80, Font.heavySystemFont(8), col("#ffffff", 0.6), "right");
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
+// INK: type-led. Huge chapter number over a red ink smear from the banner, vertical katakana.
+async function drawSmallInk(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc, b = await img(d.art.banner);
+  if (b) { zoomTo(ctx, b, 420, 0.16, 0.5, 40, 80, S, S); ctx.setFillColor(col(BG, 0.55)); ctx.fillRect(new Rect(0, 0, S, S)); }
+  vgrad(ctx, 0, S, 110, S, BG, 0, 0.95);
+  smallKicker(ctx, sc, S);
+  [..."カグラバチ"].forEach((ch, i) => txt(ctx, ch, S - 26, 34 + i * 17, 18, Font.heavySystemFont(12.5), col("#ffffff", 0.8), "center"));
+  txt(ctx, String(sc.last.num), 8, 26, 140, COND(78), col("#ffffff"));
+  txt(ctx, `CH · ${fmtDay(sc.last.date)}`, 13, 116, 120, Font.heavySystemFont(8), col(ACCENT));
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
+// ROTATE: a different volume cover every refresh (cycles through the hour), cropped to the character
+async function drawSmallRotate(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc, vols = d.art.vols;
+  const v = vols.length ? vols[Math.floor(Date.now() / 3600e3) % vols.length] : null;
+  const cover = await img(v ? v.url.replace(".256.jpg", ".512.jpg") : d.art.cover);
+  if (cover) zoomTo(ctx, cover, 300, 0.5, 0.55, 85, 70, S, S);
+  vgrad(ctx, 0, S, 0, 36, BG, 0.88, 0); vgrad(ctx, 0, S, 66, 110, BG, 0, 0.85); ctx.setFillColor(col(BG, 0.94)); ctx.fillRect(new Rect(0, 110, S, S - 110));
+  smallKicker(ctx, sc, S);
+  if (v && !sc.isNew) { rr(ctx, S - 12 - 40, 11, 40, 15, 7.5, col("#000000", 0.55)); txt(ctx, `VOL ${v.v}`, S - 12 - 40, 13, 40, Font.heavySystemFont(8), col("#ffffff"), "center"); }
+  txt(ctx, "CH", 14, 92, 30, Font.heavySystemFont(8.5), col(ACCENT));
+  txt(ctx, String(sc.last.num), 11, 98, 120, COND(36), col("#ffffff"));
+  txt(ctx, ago(sc.last.date), S - 13 - 80, 112, 80, Font.heavySystemFont(8), col("#ffffff", 0.6), "right");
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
 async function drawSmall(d) {
+  if (SMALL_STYLE === "eyes" && d.art.banner) return drawSmallEyes(d);
+  if (SMALL_STYLE === "ink") return drawSmallInk(d);
+  if (SMALL_STYLE === "rotate" && d.art.vols.length) return drawSmallRotate(d);
+  return drawSmallCover(d);
+}
+
+async function drawSmallCover(d) {
   const S = 170, ctx = ctxOf(S, S), sc = d.sc;
   const v = d.art.vols.length ? d.art.vols[d.art.vols.length - 1] : null;
   const cover = await img(v ? v.url.replace(".256.jpg", ".512.jpg") : d.art.cover);
