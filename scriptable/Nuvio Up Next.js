@@ -204,15 +204,11 @@ async function loadCard(s) {
   const pid = s.profile || 1;
   const { progress, history } = await pullData(s);
 
-  // Pick the hero: newest progress row that's either unfinished, or a finished episode (→ "up next").
-  // A finished movie is skipped in favour of the next thing, falling back to history.
+  // Hero = the newest thing you touched, finished or not (progress + history in one timeline).
+  // A finished movie shows as "Just watched"; a finished episode flips to "Up next".
   const done = (p) => p.duration > 0 && p.position / p.duration >= 0.9;
-  const rows = progress.slice().sort((a, b) => b.last_watched - a.last_watched);
-  let hero = rows.find((p) => !(p.content_type === "movie" && done(p)));
-  if (!hero && history[0]) {
-    const h = history[0];
-    hero = { content_id: h.content_id, content_type: h.content_type, season: h.season, episode: h.episode, position: 1, duration: 1, last_watched: h.watched_at, title: h.title };
-  }
+  const timeline = buildTimeline(progress, history, done);
+  const hero = timeline[0];
   if (!hero) return null;
 
   const card = {
@@ -222,7 +218,8 @@ async function loadCard(s) {
     season: hero.season, episode: hero.episode,
     position: hero.position, duration: hero.duration,
     when: hero.last_watched,
-    finished: done(hero),
+    finished: hero.finishedFlag,
+    watched: hero.content_type === "movie" && hero.finishedFlag,
   };
 
   const ref = await resolveTmdb(hero.content_id, hero.content_type);
@@ -283,19 +280,22 @@ async function loadCard(s) {
 }
 
 // Up to 3 other titles: newest unfinished progress first (one row per show), then recent history.
+// One timeline, newest first: every progress row + every history row, one entry per title
+// (its most recent event). Each entry knows whether it's finished.
+function buildTimeline(progress, history, done) {
+  const ev = [];
+  for (const p of progress) ev.push(Object.assign({}, p, { finishedFlag: done(p), src: "progress" }));
+  for (const h of history) ev.push({ content_id: h.content_id, content_type: h.content_type, season: h.season, episode: h.episode, title: h.title,
+    position: 1, duration: 1, last_watched: h.watched_at, finishedFlag: true, src: "history", h });
+  ev.sort((a, b) => b.last_watched - a.last_watched);
+  const seen = new Set(), out = [];
+  for (const e of ev) { if (seen.has(e.content_id)) continue; seen.add(e.content_id); out.push(e); }
+  return out;
+}
+
 async function buildRows(progress, history, heroId, done, max = 3) {
-  const seen = new Set([heroId]), picks = [];
-  const rows = progress.slice().sort((a, b) => b.last_watched - a.last_watched);
-  for (const p of rows) {
-    if (picks.length >= max) break;
-    if (seen.has(p.content_id) || (p.content_type === "movie" && done(p))) continue;
-    seen.add(p.content_id); picks.push({ src: "progress", p });
-  }
-  for (const h of history) {
-    if (picks.length >= max) break;
-    if (seen.has(h.content_id)) continue;
-    seen.add(h.content_id); picks.push({ src: "history", h });
-  }
+  const picks = buildTimeline(progress, history, done).filter((e) => e.content_id !== heroId).slice(0, max)
+    .map((e) => (e.src === "history" ? { src: "history", h: e.h } : { src: "progress", p: e }));
   const out = [];
   for (const it of picks) {
     const x = it.p || it.h;
@@ -304,11 +304,14 @@ async function buildRows(progress, history, heroId, done, max = 3) {
       const p = it.p, fin = done(p), left = p.duration > 0 ? mins(p.duration - p.position) : null;
       r.pct = p.duration > 0 ? Math.min(1, p.position / p.duration) : 0;
       const short = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
-      if (r.type === "movie") r.line = left ? `${short(left)} left` : "Movie";
-      else if (fin) { r.line = `S${p.season} E${p.episode + 1} next`; r.pct = 1; }
+      if (r.type === "movie") { r.line = fin ? `✓ Watched · ${agoShort(p.last_watched)} ago` : left ? `${short(left)} left` : "Movie"; if (fin) { r.pct = 1; r.done = true; } }
+      else if (fin) { r.line = `✓ S${p.season} E${p.episode} · E${p.episode + 1} next`; r.pct = 1; r.done = true; }
       else r.line = `S${p.season} E${p.episode}` + (left ? ` · ${short(left)} left` : "");
       r.when = p.last_watched;
-    } else { r.line = "Watched " + ago(it.h.watched_at); r.pct = 1; r.when = it.h.watched_at; }
+    } else {
+      const h = it.h; r.pct = 1; r.done = true; r.when = h.watched_at;
+      r.line = r.type === "movie" ? `✓ Watched · ${agoShort(h.watched_at)} ago` : `✓ S${h.season} E${h.episode} · ${agoShort(h.watched_at)} ago`;
+    }
     const ref = await resolveTmdb(x.content_id, x.content_type);
     if (ref) {
       const d = await tmdb(`/${ref.kind}/${ref.id}?append_to_response=images,external_ids&include_image_language=en,null`);
@@ -358,6 +361,7 @@ function vfade(ctx, y0, y1, fromA, toA, hex, x0 = 0) {
 }
 const mins = (ms) => Math.max(1, Math.round(ms / 60000));
 function hm(m) { return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`; }
+function agoShort(ms) { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? Math.max(1, m) + "m" : m < 1440 ? Math.round(m / 60) + "h" : Math.round(m / 1440) + "d"; }
 function ago(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
   if (m < 2) return "now"; if (m < 60) return m + "m ago";
@@ -466,6 +470,7 @@ async function drawCard(c) {
 
 // ---------- shared hero wording ----------
 function heroInfo(c) {
+  if (c.watched) return { upNext: false, watched: true, d: null, notOut: false, kick: "JUST WATCHED", pct: 1, left: null, ep: "" };
   const upNext = c.type === "series" && c.finished;
   const d = upNext ? daysUntil(c.airDate) : null;
   const notOut = upNext && d != null && d > 0;
@@ -649,11 +654,11 @@ async function drawLogo(ctx, c, x, y, maxW, maxH, fallbackFs) {
 }
 function subLine(c, info) {
   if (c.type === "series") return info.ep + (c.epName ? `  ${c.epName}` : "");
-  return [c.year, c.runtime ? hm(c.runtime) : null, ratingText(c)].filter(Boolean).join("  ·  ");
+  return [c.year, c.runtime ? hm(c.runtime) : null, ratingText(c)].filter(Boolean).join("  ·  ");   // callers fit it
 }
-const pctText = (c, info) => (info.upNext ? (info.notOut ? `IN ${info.d}D` : `E${c.showEpisode}`) : `${Math.round(info.pct * 100)}%`);
-const barPct = (c, info) => (info.upNext ? (c.seasonEpisodes ? Math.min(1, (c.seen || []).length / c.seasonEpisodes) : 0) : info.pct);
-const leftText = (c, info) => (info.upNext ? (info.notOut ? `E${c.showEpisode} airs soon` : `${(c.seen || []).length}${c.seasonEpisodes ? "/" + c.seasonEpisodes : ""} watched`) : info.left ? `${hm(info.left)} left` : "");
+const pctText = (c, info) => (info.watched ? "DONE" : info.upNext ? (info.notOut ? `IN ${info.d}D` : `E${c.showEpisode}`) : `${Math.round(info.pct * 100)}%`);
+const barPct = (c, info) => (info.watched ? 1 : info.upNext ? (c.seasonEpisodes ? Math.min(1, (c.seen || []).length / c.seasonEpisodes) : 0) : info.pct);
+const leftText = (c, info) => (info.watched ? `Watched ${ago(c.when)}` : info.upNext ? (info.notOut ? `E${c.showEpisode} airs soon` : `${(c.seen || []).length}${c.seasonEpisodes ? "/" + c.seasonEpisodes : ""} watched`) : info.left ? `${hm(info.left)} left` : "");
 
 // Ticket-style barcode progress: bars of varying height, red up to the % watched.
 function barcode(ctx, x, yBottom, w, pct, n = 40) {
@@ -684,14 +689,15 @@ async function drawSlash(c) {
   const X = 14;
   text(ctx, info.kick, X, 14, 170, Font.boldSystemFont(8.5), col(ACCENT));
   await drawLogo(ctx, c, X, 30, 150, 38, 28);
-  text(ctx, fit(subLine(c, info), 10, 150, 0.55), X, 74, 190, Font.semiboldSystemFont(10), col("#ffffff", 0.85));
+  let sl = subLine(c, info); if (c.type === "movie") { const parts = sl.split("  ·  "); while (parts.length > 1 && estW(parts.join("  ·  "), 10, 0.55) > 150) parts.splice(1, 1); sl = parts.join("  ·  "); }
+  text(ctx, fit(sl, 10, 150, 0.55), X, 74, 190, Font.semiboldSystemFont(10), col("#ffffff", 0.85));
   const big = pctText(c, info);
   text(ctx, big, X, 90, 120, COND(34), col("#ffffff"));
   text(ctx, leftText(c, info), X + 142 - 120, 112, 120, Font.mediumSystemFont(9), col("#ffffff", 0.65), "right");
   barcode(ctx, X, H - 12, 142, barPct(c, info));
   if (!(c.rows && c.rows.length)) { text(ctx, "Nothing else", edge(40) + 16, 36, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35)); text(ctx, "in progress", edge(54) + 16, 50, 110, Font.mediumSystemFont(10), col("#ffffff", 0.35)); }
 
-  text(ctx, "ALSO WATCHING", edge(14) + 16, 14, 110, Font.boldSystemFont(8.5), col("#ffffff", 0.45));
+  text(ctx, "RECENT", edge(14) + 16, 14, 110, Font.boldSystemFont(8.5), col("#ffffff", 0.45));
   await loadRowImages(c.rows);
   (c.rows || []).slice(0, 3).forEach((r, i) => {
     const y = 32 + i * 41, x = edge(y + 16) + 16, w = W - x - 12;
@@ -883,7 +889,7 @@ async function drawShatter(c) {
     rrect(ctx, x0, ly - 1, x1 - x0, 2, 0, col(ACCENT));
     vgrad(ctx, x0, x1, ly, Math.min(XH, ly + 14), ACCENT, 0.28, 0);
     const tag = `${Math.round(p * 100)}%`, tw = estW(tag, 9, 0.62) + 12;
-    const ty = ly < 30 ? ly + 6 : ly - 22, gwT = SL / 2 + 6, offT = SL / 2 - (SL * (ty + 16)) / XH;
+    const ty = ly < 30 ? ly + 6 : Math.min(ly - 22, 258), gwT = SL / 2 + 6, offT = SL / 2 - (SL * (ty + 16)) / XH;
     const rEdge = i === B.length - 2 ? XW - 12 : x1 + offT - gwT - 10;
     const tx = rEdge - tw;
     rrect(ctx, tx, ty, tw, 16, 8, col(ACCENT)); text(ctx, tag, tx, ty + 2, tw, Font.heavySystemFont(9), col("#ffffff"), "center");
@@ -1016,11 +1022,11 @@ async function lockLogo(c) {
 }
 function lockFacts(c) {
   const info = heroInfo(c), n = c.seasonEpisodes && c.seasonEpisodes >= 2 && c.seasonEpisodes <= 26 ? c.seasonEpisodes : null;
-  const tag = c.type === "movie" ? "MOVIE" : info.upNext ? `E${c.showEpisode} NEXT` : `S${c.showSeason}E${c.showEpisode}`;
-  const big = info.upNext ? (info.notOut ? `${info.d}D` : `E${c.showEpisode}`) : String(Math.round(info.pct * 100));
-  const unit = info.upNext ? "" : "%";
+  const tag = info.watched ? "WATCHED" : c.type === "movie" ? "MOVIE" : info.upNext ? `E${c.showEpisode} NEXT` : `S${c.showSeason}E${c.showEpisode}`;
+  const big = info.watched ? "✓" : info.upNext ? (info.notOut ? `${info.d}D` : `E${c.showEpisode}`) : String(Math.round(info.pct * 100));
+  const unit = info.upNext || info.watched ? "" : "%";
   const epsLeft = n ? Math.max(0, n - (c.seen || []).length) : null;
-  const note = info.upNext ? (info.notOut ? "AIRS SOON" : epsLeft != null ? `${epsLeft} EP${epsLeft === 1 ? "" : "S"} LEFT IN S${c.showSeason}` : "UP NEXT")
+  const note = info.watched ? `WATCHED ${ago(c.when).toUpperCase()}` : info.upNext ? (info.notOut ? "AIRS SOON" : epsLeft != null ? `${epsLeft} EP${epsLeft === 1 ? "" : "S"} LEFT IN S${c.showSeason}` : "UP NEXT")
     : info.left ? `${hm(info.left).toUpperCase()} LEFT` : "NOW WATCHING";
   return { info, n, tag, big, unit, note };
 }
@@ -1105,6 +1111,7 @@ async function drawLockCircle(c) {
 // INLINE (the line above the clock): text only
 function lockInline(c) {
   const f = lockFacts(c);
+  if (f.info.watched) return `✓ ${c.title} · watched ${ago(c.when)}`;
   if (c.type === "movie") return `▶ ${c.title}${f.info.left ? " · " + hm(f.info.left) + " left" : ""}`;
   if (f.info.upNext) return `▶ ${c.title} · E${c.showEpisode} next`;
   return `▶ ${c.title} S${c.showSeason}E${c.showEpisode}${f.info.left ? " · " + hm(f.info.left) + " left" : ""}`;
@@ -1203,7 +1210,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v13)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v14)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1264,7 +1271,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v13)";
+    a.title = "Sign in to Nuvio (v14)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1343,7 +1350,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v13)";
+    a.title = "Nuvio Up Next (v14)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
