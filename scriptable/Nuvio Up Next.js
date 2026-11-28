@@ -1032,7 +1032,7 @@ function lockTitle(ctx, c, logo, x, y, tw, th) {
 }
 function lockPill(ctx, tag, W) {
   const pw = Math.max(30, sfW(tag, 8.5) + 16);
-  ctx.setStrokeColor(lw_(0.75)); ctx.setLineWidth(1);
+  ctx.setStrokeColor(lw_(1)); ctx.setLineWidth(1.4);
   const pp = new Path(); pp.addRoundedRect(new Rect(W - 1 - pw, 5, pw, 14), 7, 7); ctx.addPath(pp); ctx.strokePath();
   ctx.setTextAlignedCenter(); ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(lw_(1));
   ctx.drawTextInRect(trackT(tag), new Rect(W - 1 - pw - 10, 7, pw + 20, 12)); ctx.setTextAlignedLeft();
@@ -1061,8 +1061,17 @@ async function drawLockTicks(c) {
       if (i === c.showEpisode) rrect(ctx, 1 + (i - 1) * (w + gap), by + bh + 2, w, 2, 1, lw_(1));                         // marker under the current one
     }
   } else {
-    const p = barPct(c, f.info);
-    rrect(ctx, 1, by, bw, bh, 4, lw_(0.25)); if (p > 0) rrect(ctx, 1, by, Math.max(bh, bw * p), bh, 4, lw_(1));
+    // Movies (and shows without an episode count): still ticks, one per ~5 minutes of runtime (max 26)
+    const p = barPct(c, f.info), mins_ = c.duration ? c.duration / 60000 : (c.runtime || 120);
+    const n = Math.max(12, Math.min(26, Math.round(mins_ / 5))), gap = 1.4, w = (bw - gap * (n - 1)) / n;
+    const done = p * n, full = Math.floor(done);
+    for (let i = 0; i < n; i++) {
+      rrect(ctx, 1 + i * (w + gap), by, w, bh, 1.6, lw_(i < full ? 1 : 0.25));
+      if (i === full && done > full) {
+        rrect(ctx, 1 + i * (w + gap), by, Math.max(1.5, w * (done - full)), bh, 1.6, lw_(1));
+        rrect(ctx, 1 + i * (w + gap), by + bh + 2, w, 2, 1, lw_(1));
+      }
+    }
   }
   lockBottom(ctx, f, W);
   return ctx.getImage();
@@ -1194,7 +1203,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v12)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v13)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1255,7 +1264,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v12)";
+    a.title = "Sign in to Nuvio (v13)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1334,7 +1343,7 @@ async function main() {
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v12)";
+    a.title = "Nuvio Up Next (v13)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
