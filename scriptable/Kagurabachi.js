@@ -294,8 +294,7 @@ async function drawSmallKoi(d) {
   // bubbles
   for (let i = 0; i < 9; i++) circle(ctx, 60 + rnd(i + 3) * 100, 20 + rnd(i + 11) * 90, 1 + rnd(i + 5) * 1.8, col("#d9ecff", 0.35), false, 0.6);
   vgrad(ctx, 0, S, 112, S, "#050a18", 0, 0.92);
-  rr(ctx, 12, 15, 6, 6, 3, col("#ff7a2f"));
-  txt(ctx, "KAGURABACHI", 22, 12, 120, Font.heavySystemFont(9), col("#ffffff", 0.92));
+  txt(ctx, "カグラバチ", 12, 10, 130, Font.heavySystemFont(14.5), col("#ec4524"));   // the red logo, like the covers
   if (sc.isNew) { rr(ctx, S - 12 - 34, 11, 34, 15, 7.5, col("#ff7a2f")); txt(ctx, "NEW", S - 12 - 34, 13, 34, Font.heavySystemFont(8.5), col("#ffffff"), "center"); }
   txt(ctx, "CHAPTER", 14, 40, 80, Font.heavySystemFont(7.5), col("#9fd2ff"));
   txt(ctx, String(sc.last.num), 10, 46, 120, COND(46), col("#ffffff"));
