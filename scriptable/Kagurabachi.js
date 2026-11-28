@@ -28,6 +28,7 @@ const GLASS_SAFE = true;
 // | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
 // | "kingyo" (drawn goldfish circling the number) | "wave" (seigaiha wave pattern + katana slash)
 // | "koi" (orange/white/blue goldfish streaming through night water) | "asanoha" (hemp-leaf pattern + eclipse)
+// | "kingyo2" (vol. 11 cover style: fat vermilion/white kingyo, water droplets, red logo, katana hilt)
 const SMALL_STYLE = "rotate";
 
 // ---------- storage ----------
@@ -337,7 +338,70 @@ async function drawSmallAsanoha(d) {
   return ctx.getImage();
 }
 
+// ---- KINGYO II: built from the volume 11 cover's language ----
+const VERM = "#ec4524", PAPER = "#f3eee6", INK = "#0c0a0b", GOLD = "#c9a65a";
+// a glossy water droplet: dark core, white rim, highlight, tiny glint
+function droplet(ctx, x, y, r) {
+  circle(ctx, x, y, r, col("#000000", 0.35));
+  circle(ctx, x, y, r, col("#ffffff", 0.85), false, Math.max(0.6, r * 0.12));
+  const h = new Path(); h.addEllipse(new Rect(x - r * 0.62, y - r * 0.6, r * 0.55, r * 0.38)); ctx.addPath(h); ctx.setFillColor(col("#ffffff", 0.9)); ctx.fillPath();
+  circle(ctx, x + r * 0.35, y + r * 0.4, Math.max(0.5, r * 0.1), col("#ffffff", 0.8));
+}
+// fat fancy goldfish (oranda/ranchu), facing `ang`; vermilion + white + black spots, big glossy eye
+function fancyKingyo(ctx, cx, cy, ang, sc, seed) {
+  const R = (x, y) => new Point(cx + (x * Math.cos(ang) - y * Math.sin(ang)) * sc, cy + (x * Math.sin(ang) + y * Math.cos(ang)) * sc);
+  const shape = (pts, color) => { const p = new Path(); p.move(R(...pts[0])); for (let i = 1; i < pts.length; i += 3) p.addCurve(R(...pts[i + 2]), R(...pts[i]), R(...pts[i + 1])); p.closeSubpath(); ctx.addPath(p); ctx.setFillColor(color); ctx.fillPath(); };
+  const dot = (x, y, r, c) => { const q = R(x, y); circle(ctx, q.x, q.y, r * sc, c); };
+  // big flowing tail, sheer, with ink-wash ribs
+  shape([[-9, 0], [-16, -6], [-30, -20], [-36, -12], [-31, -6], [-33, 0], [-20, -1]], col(PAPER, 0.55));
+  shape([[-9, 0], [-16, 6], [-30, 20], [-36, 12], [-31, 6], [-33, 0], [-20, 1]], col(PAPER, 0.55));
+  shape([[-10, 0], [-17, -4], [-26, -12], [-28, -6], [-25, -2], [-26, 2], [-17, 1]], col(VERM, 0.55));
+  for (const yy of [-14, -8, -3, 3, 8, 14]) { const l = new Path(); l.move(R(-11, yy * 0.15)); l.addLine(R(-31, yy)); ctx.addPath(l); ctx.setStrokeColor(col(INK, 0.35)); ctx.setLineWidth(0.5 * sc); ctx.strokePath(); }
+  // fins
+  shape([[2, -9], [-2, -16], [-9, -17], [-8, -12], [-6, -10], [-3, -9], [0, -9]], col(VERM, 0.8));
+  shape([[2, 9], [0, 14], [-5, 16], [-5, 12], [-3, 11], [-1, 10], [1, 9]], col(PAPER, 0.75));
+  // round body (paper white)
+  shape([[14, 0], [14, -9], [5, -12], [-3, -11.5], [-10, -11], [-14, -5], [-13, 0], [-12, 5], [-9, 11], [-3, 11.5], [5, 12], [14, 9], [14, 0]], col(PAPER));
+  // vermilion mottling + ink spots (kept inside the body)
+  const pr = [[2, -5, 5.5], [-6, 2, 6], [7, 5, 3.5], [-8, -6, 3.2], [9, -6, 3], [0, 7, 3]];
+  pr.forEach(([x, y, r], i) => { if (rnd(seed + i) > 0.15) dot(x, y, r, col(VERM, 0.95)); });
+  [[-3, -2, 1.4], [4, 2, 1.1], [-9, 4, 1.2], [1, -9, 0.9], [-5, 8, 1]].forEach(([x, y, r], i) => { if (rnd(seed + 20 + i) > 0.3) dot(x, y, r, col(INK, 0.9)); });
+  // head cap (wen) + big glossy eye
+  dot(10, -2, 4.6, col(VERM));
+  dot(9, -4.2, 3.4, col(INK)); dot(8, -5.4, 1.3, col("#ffffff", 0.95)); dot(10.2, -3.2, 0.6, col("#ffffff", 0.7));
+}
+// the katana hilt (tsuka) running down the left edge, like the cover: dark wrap, gold diamonds, round gold guard
+function hiltDown(ctx, x, y0, y1, w) {
+  rr(ctx, x, y0, w, y1 - y0, w * 0.3, col("#3a2c2a")); rr(ctx, x + 1.5, y0, w - 3, y1 - y0, w * 0.25, col("#241b1a"));
+  for (let y = y0 + 4; y < y1 - w * 0.6; y += w * 1.05) poly(ctx, [[x + w / 2, y], [x + w * 0.88, y + w * 0.5], [x + w / 2, y + w], [x + w * 0.12, y + w * 0.5]], col(GOLD, 0.9));
+  rr(ctx, x - 1, y1 - 4, w + 2, 5, 1.5, col(GOLD));                                      // collar
+  const t = new Path(); t.addEllipse(new Rect(x + w / 2 - 17, y1, 34, 9)); ctx.addPath(t); ctx.setFillColor(col(GOLD)); ctx.fillPath();
+  const t2 = new Path(); t2.addEllipse(new Rect(x + w / 2 - 12, y1 + 2, 24, 5)); ctx.addPath(t2); ctx.setFillColor(col("#8a6d34")); ctx.fillPath();
+}
+async function drawSmallKingyo2(d) {
+  const S = 170, ctx = ctxOf(S, S), sc = d.sc;
+  ctx.setFillColor(col(INK)); ctx.fillRect(new Rect(0, 0, S, S));
+  // grey ink wash
+  for (let i = 0; i < 14; i++) { const x = rnd(i + 300) * S, y = rnd(i + 330) * S, r = 18 + rnd(i + 360) * 40; circle(ctx, x, y, r, col("#ffffff", 0.018 + rnd(i + 390) * 0.02)); }
+  // the kingyo: a big one sweeping in from the bottom-right, a smaller one up top
+  fancyKingyo(ctx, 140, 100, Math.PI * 1.1, 1.85, 1);
+  fancyKingyo(ctx, 156, 36, Math.PI * 0.9, 0.95, 9);
+  // water droplets + white splatter
+  [[118, 20, 5], [160, 70, 4], [100, 118, 4.5], [76, 112, 2.8], [128, 62, 3], [52, 128, 2.4], [150, 128, 3.2]].forEach(([x, y, r]) => droplet(ctx, x, y, r));
+  for (let i = 0; i < 30; i++) circle(ctx, 40 + rnd(i + 500) * 130, rnd(i + 540) * 150, 0.4 + rnd(i + 580) * 1.3, col("#ffffff", 0.55 + rnd(i) * 0.4));
+  // katana hilt down the left, red logo across the top
+  hiltDown(ctx, 9, -6, 96, 13);
+  txt(ctx, "カグラバチ", 30, 6, 140, Font.heavySystemFont(21), col(VERM));
+  // chapter: serif numeral like the cover, Japanese "chapter N" underneath
+  txt(ctx, String(sc.last.num), 32, 38, 110, new Font("Georgia-Bold", 44), col("#ffffff"));
+  txt(ctx, `“第${sc.last.num}話”  ·  ${sc.isNew ? "NEW" : ago(sc.last.date)}`, 34, 90, 120, Font.heavySystemFont(7.5), col("#ffffff", 0.85));
+  vgrad(ctx, 0, S, 118, 136, INK, 0, 0.85); ctx.setFillColor(col(INK, 0.88)); ctx.fillRect(new Rect(0, 136, S, S - 136));
+  smallFooter(ctx, sc, S);
+  return ctx.getImage();
+}
+
 async function drawSmall(d) {
+  if (SMALL_STYLE === "kingyo2") return drawSmallKingyo2(d);
   if (SMALL_STYLE === "koi") return drawSmallKoi(d);
   if (SMALL_STYLE === "asanoha") return drawSmallAsanoha(d);
   if (SMALL_STYLE === "kingyo") return drawSmallKingyo(d);
