@@ -26,7 +26,7 @@ const FAMILY = config.runsInWidget ? config.widgetFamily : "large";
 const GLASS_SAFE = true;
 // Small home widget look: "eyes" (Chihiro's eyes + katana, from the official art) | "ink" (type-led, red ink)
 // | "rotate" (a different volume cover each refresh) | "cover" (latest volume cover)
-const SMALL_STYLE = "eyes";
+const SMALL_STYLE = "rotate";
 
 // ---------- storage ----------
 const fm = FileManager.local();
