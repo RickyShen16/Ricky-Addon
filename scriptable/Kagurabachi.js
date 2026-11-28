@@ -29,7 +29,7 @@ const GLASS_SAFE = true;
 // | "kingyo" (drawn goldfish circling the number) | "wave" (seigaiha wave pattern + katana slash)
 // | "koi" (orange/white/blue goldfish streaming through night water) | "asanoha" (hemp-leaf pattern + eclipse)
 // | "kingyo2" (vol. 11 cover style: fat vermilion/white kingyo, water droplets, red logo, katana hilt)
-const SMALL_STYLE = "rotate";
+const SMALL_STYLE = "koi";
 
 // ---------- storage ----------
 const fm = FileManager.local();
