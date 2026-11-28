@@ -31,6 +31,9 @@ const LAYOUT = "slash";
 const XL_LAYOUT = "shatter";
 const FAMILY = config.runsInWidget ? config.widgetFamily : (Device.isPhone() ? "medium" : "extraLarge");
 const IS_XL = FAMILY === "extraLarge" || FAMILY === "large";
+const IS_LOCK = String(FAMILY).startsWith("accessory");
+// Lock screen rectangle: "ticks" (one tick per episode) | "barcode" (matches the home + Mac widgets)
+const LOCK_STYLE = "ticks";
 
 // Nuvio's official public API (nuvio.tv/docs). The publishable key is published there for third-party apps.
 const NUVIO = "https://api.nuvio.tv";
@@ -275,7 +278,7 @@ async function loadCard(s) {
     const d = await tmdb(`/${card.type === "movie" ? "movie" : "tv"}/${card.tmdb}?append_to_response=images,external_ids&include_image_language=en,null`);
     card.poster = d && d.poster_path ? tmdbImg("w342", d.poster_path) : null;
   }
-  if (IS_XL || LAYOUT !== "hero") card.rows = await buildRows(progress, history, hero.content_id, done, IS_XL ? 6 : 3);
+  if (!IS_LOCK && (IS_XL || LAYOUT !== "hero")) card.rows = await buildRows(progress, history, hero.content_id, done, IS_XL ? 6 : 3);
   return card;
 }
 
@@ -999,6 +1002,105 @@ async function drawRadar(c) {
   return ctx.getImage();
 }
 
+// =====================================================================
+// LOCK SCREEN (single-tint: everything is white at different strengths)
+// =====================================================================
+const lw_ = (a) => new Color("#ffffff", a);
+const trackT = (t) => (t || "").split("").join(" ");
+function lockCtx(w, h) { const c = new DrawContext(); c.size = new Size(w, h); c.respectScreenScale = true; c.opaque = false; return c; }
+function sfW(str, fs) { let w = 0; for (const ch of str || "") { if (ch === " ") w += fs * 0.28; else if (/[ilIjtf.,!:;'|]/.test(ch)) w += fs * 0.30; else if (/[mwMW]/.test(ch)) w += fs * 0.85; else if (/[A-Z0-9]/.test(ch)) w += fs * 0.62; else w += fs * 0.54; } return w; }
+async function lockLogo(c) {
+  if (!c.logo) return null;
+  // bri=255 pushes a coloured logo to white: dark art vanishes on the single-tint lock screen
+  return await loadImage("https://wsrv.nl/?url=" + encodeURIComponent(c.logo.replace("/w500/", "/w300/")) + "&output=png&bri=255");
+}
+function lockFacts(c) {
+  const info = heroInfo(c), n = c.seasonEpisodes && c.seasonEpisodes >= 2 && c.seasonEpisodes <= 26 ? c.seasonEpisodes : null;
+  const tag = c.type === "movie" ? "MOVIE" : info.upNext ? `E${c.showEpisode} NEXT` : `S${c.showSeason}E${c.showEpisode}`;
+  const big = info.upNext ? (info.notOut ? `${info.d}D` : `E${c.showEpisode}`) : String(Math.round(info.pct * 100));
+  const unit = info.upNext ? "" : "%";
+  const epsLeft = n ? Math.max(0, n - (c.seen || []).length) : null;
+  const note = info.upNext ? (info.notOut ? "AIRS SOON" : epsLeft != null ? `${epsLeft} EP${epsLeft === 1 ? "" : "S"} LEFT IN S${c.showSeason}` : "UP NEXT")
+    : info.left ? `${hm(info.left).toUpperCase()} LEFT` : "NOW WATCHING";
+  return { info, n, tag, big, unit, note };
+}
+function lockTitle(ctx, c, logo, x, y, tw, th) {
+  if (logo) { const s = Math.min(tw / logo.size.width, th / logo.size.height); ctx.drawImageInRect(logo, new Rect(x, y + (th - logo.size.height * s) / 2, logo.size.width * s, logo.size.height * s)); return; }
+  const t = c.title || "Untitled"; let fs = 15; while (fs > 10 && sfW(t, fs) > tw) fs -= 1;
+  ctx.setFont(Font.boldSystemFont(fs)); ctx.setTextColor(lw_(1)); ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(fit(t, fs, tw, 0.56), new Rect(x, y + (th - fs) / 2 - 1, tw + 20, fs + 6));
+}
+function lockPill(ctx, tag, W) {
+  const pw = Math.max(30, sfW(tag, 8.5) + 16);
+  ctx.setStrokeColor(lw_(0.75)); ctx.setLineWidth(1);
+  const pp = new Path(); pp.addRoundedRect(new Rect(W - 1 - pw, 5, pw, 14), 7, 7); ctx.addPath(pp); ctx.strokePath();
+  ctx.setTextAlignedCenter(); ctx.setFont(Font.boldSystemFont(8.5)); ctx.setTextColor(lw_(1));
+  ctx.drawTextInRect(trackT(tag), new Rect(W - 1 - pw - 10, 7, pw + 20, 12)); ctx.setTextAlignedLeft();
+  return pw;
+}
+function lockBottom(ctx, f, W) {
+  const fs = 21; ctx.setFont(Font.boldSystemFont(fs)); ctx.setTextColor(lw_(1)); ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(f.big, new Rect(1, 47, 80, 28));
+  if (f.unit) { ctx.setFont(Font.boldSystemFont(10)); ctx.setTextColor(lw_(0.8)); ctx.drawTextInRect(f.unit, new Rect(1 + sfW(f.big, fs) * 1.05 + 1, 54, 20, 14)); }
+  ctx.setTextAlignedRight(); ctx.setFont(Font.boldSystemFont(8)); ctx.setTextColor(lw_(0.8));
+  ctx.drawTextInRect(trackT(f.note), new Rect(W - 140, 57, 139, 12)); ctx.setTextAlignedLeft();
+}
+
+// RECTANGLE A: the original "ticks" design (one tick per episode)
+async function drawLockTicks(c) {
+  const W = 172, H = 76, ctx = lockCtx(W, H), f = lockFacts(c), logo = await lockLogo(c);
+  const pw = lockPill(ctx, f.tag, W);
+  lockTitle(ctx, c, logo, 1, 3, W - 2 - pw - 8, 24);
+  const by = 34, bh = 8, bw = W - 2;
+  if (c.type === "series" && f.n) {
+    const seen = new Set(c.seen || []), gap = 1.4, w = (bw - gap * (f.n - 1)) / f.n;
+    for (let i = 1; i <= f.n; i++) {
+      const cur = i === c.showEpisode && !f.info.upNext;
+      rrect(ctx, 1 + (i - 1) * (w + gap), by, w, bh, 1.6, lw_(seen.has(i) ? 1 : 0.25));
+      if (cur && f.info.pct > 0) rrect(ctx, 1 + (i - 1) * (w + gap), by, Math.max(1.5, w * f.info.pct), bh, 1.6, lw_(1));   // partly-watched tick
+      if (i === c.showEpisode) rrect(ctx, 1 + (i - 1) * (w + gap), by + bh + 2, w, 2, 1, lw_(1));                         // marker under the current one
+    }
+  } else {
+    const p = barPct(c, f.info);
+    rrect(ctx, 1, by, bw, bh, 4, lw_(0.25)); if (p > 0) rrect(ctx, 1, by, Math.max(bh, bw * p), bh, 4, lw_(1));
+  }
+  lockBottom(ctx, f, W);
+  return ctx.getImage();
+}
+
+// RECTANGLE B: barcode, matching the home-screen + Mac widgets
+async function drawLockBarcode(c) {
+  const W = 172, H = 76, ctx = lockCtx(W, H), f = lockFacts(c), logo = await lockLogo(c);
+  const pw = lockPill(ctx, f.tag, W);
+  lockTitle(ctx, c, logo, 1, 3, W - 2 - pw - 8, 24);
+  const p = barPct(c, f.info), n = 34, step = (W - 2) / n;
+  for (let i = 0; i < n; i++) { const h = [12, 8, 12, 5, 12, 9][i % 6]; rrect(ctx, 1 + i * step, 44 - h, Math.max(1.6, step * 0.45), h, 0.6, lw_(i / n < p ? 1 : 0.28)); }
+  lockBottom(ctx, f, W);
+  return ctx.getImage();
+}
+
+// CIRCLE: progress ring + % (or next episode)
+async function drawLockCircle(c) {
+  const S = 76, m = S / 2, ctx = lockCtx(S, S), f = lockFacts(c), p = barPct(c, f.info);
+  strokeCircle(ctx, m, m, 33, lw_(0.3), 5);
+  if (p > 0) { const seg = Math.max(2, Math.round(90 * p)), ap = new Path(); for (let i = 0; i <= seg; i++) { const a = (-90 + 360 * p * (i / seg)) * Math.PI / 180, pt = new Point(m + 33 * Math.cos(a), m + 33 * Math.sin(a)); if (i === 0) ap.move(pt); else ap.addLine(pt); } ctx.setStrokeColor(lw_(1)); ctx.setLineWidth(5); ctx.addPath(ap); ctx.strokePath(); }
+  ctx.setTextAlignedCenter();
+  ctx.setFont(Font.boldSystemFont(f.unit ? 19 : 18)); ctx.setTextColor(lw_(1));
+  ctx.drawTextInRect(f.big + f.unit, new Rect(4, m - 16, S - 8, 24));
+  ctx.setFont(Font.boldSystemFont(7.5)); ctx.setTextColor(lw_(0.7));
+  const sub = c.type === "movie" ? (f.info.left ? `${hm(f.info.left).replace(" ", "")} LEFT` : "MOVIE") : f.info.upNext ? "NEXT" : `S${c.showSeason}E${c.showEpisode}`;
+  ctx.drawTextInRect(sub.toUpperCase(), new Rect(6, m + 7, S - 12, 12));
+  return ctx.getImage();
+}
+
+// INLINE (the line above the clock): text only
+function lockInline(c) {
+  const f = lockFacts(c);
+  if (c.type === "movie") return `▶ ${c.title}${f.info.left ? " · " + hm(f.info.left) + " left" : ""}`;
+  if (f.info.upNext) return `▶ ${c.title} · E${c.showEpisode} next`;
+  return `▶ ${c.title} S${c.showSeason}E${c.showEpisode}${f.info.left ? " · " + hm(f.info.left) + " left" : ""}`;
+}
+
 function messageCard(title, body) {
   const ctx = new DrawContext();
   ctx.size = new Size(W, H); ctx.opaque = true; ctx.respectScreenScale = true;
@@ -1051,6 +1153,18 @@ async function buildWidget() {
     else problem = ["Nuvio problem", String(e.message || e).slice(0, 120)];
     if (e.auth) w.url = `scriptable:///run/${encodeURIComponent(Script.name() || SCRIPT_NAME)}`;
   }
+  if (IS_LOCK) {
+    if (problem || !card) { const t = w.addText(problem ? problem[0] : "Nuvio"); t.font = Font.boldSystemFont(11); return w; }
+    try {
+      if (FAMILY === "accessoryInline") w.addText(lockInline(card));
+      else {
+        const img = FAMILY === "accessoryCircular" ? await drawLockCircle(card) : LOCK_STYLE === "barcode" ? await drawLockBarcode(card) : await drawLockTicks(card);
+        const im = w.addImage(img); im.centerAlignImage(); im.applyFittingContentMode();
+      }
+      w.url = deepLink(card);
+    } catch (e) { w.addText("Nuvio: " + String(e.message || e).slice(0, 40)); }
+    return w;
+  }
   try {
     if (problem) setArt(w, messageCard(problem[0], problem[1]));
     else {
@@ -1080,7 +1194,7 @@ async function diagnose() {
   if (data && data.history[0]) { const h = data.history[0]; lines.push(`Last watched: ${h.title || h.content_id} S${h.season}E${h.episode}`); }
   if (s && data) await step("Card", async () => { const c = await loadCard(s); return c ? `${c.title} (${c.type}${c.tmdb ? ", TMDB " + c.tmdb : ", no TMDB match"})` : "nothing to show"; });
   lines.push("TMDB key: " + (TMDB_KEY ? "set" : "missing"));
-  const a = new Alert(); a.title = "Connection check (v11)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
+  const a = new Alert(); a.title = "Connection check (v12)"; a.message = lines.join("\n\n"); a.addAction("Copy"); a.addCancelAction("Close");
   if ((await a.presentAlert()) === 0) Pasteboard.copy(lines.join("\n"));
 }
 
@@ -1141,7 +1255,7 @@ const str = (v) => (typeof v === "string" ? v : "");
 async function alertSignIn() {
   for (let tries = 0; tries < 3; tries++) {
     const a = new Alert();
-    a.title = "Sign in to Nuvio (v11)";
+    a.title = "Sign in to Nuvio (v12)";
     a.message = "Your password goes straight to Nuvio and isn't saved. Only a login pass is kept, so the widgets stay signed in.";
     a.addTextField("Email");
     a.addSecureTextField("Password");
@@ -1202,21 +1316,35 @@ async function signInFlow() {
   return true;
 }
 
+// In-app: rectangle + circle on a dark plate, scaled up (lock widgets can't be previewed directly)
+async function previewLock() {
+  const card = await loadCard(await liveSession());
+  if (!card) return;
+  const k = 3, pv = new DrawContext(); pv.size = new Size(300 * k, 130 * k); pv.opaque = true; pv.respectScreenScale = false;
+  pv.setFillColor(new Color("#1b0b0b")); pv.fillRect(new Rect(0, 0, 300 * k, 130 * k));
+  const r = LOCK_STYLE === "barcode" ? await drawLockBarcode(card) : await drawLockTicks(card), c = await drawLockCircle(card);
+  pv.drawImageInRect(r, new Rect(20 * k, 27 * k, 172 * k, 76 * k)); pv.drawImageInRect(c, new Rect(206 * k, 27 * k, 76 * k, 76 * k));
+  pv.setFont(Font.semiboldSystemFont(11 * k)); pv.setTextColor(new Color("#ffffff", 0.7)); pv.drawText(lockInline(card), new Point(20 * k, 6 * k));
+  await QuickLook.present(pv.getImage());
+}
+
 async function main() {
   if (config.runsInWidget) { Script.setWidget(await buildWidget()); Script.complete(); return; }
   let s = await readSession();
   if (!s) { if (!(await signInFlow())) return Script.complete(); await diagnose(); }
   else {
     const a = new Alert();
-    a.title = "Nuvio Up Next (v11)";
+    a.title = "Nuvio Up Next (v12)";
     a.message = `Signed in · profile: ${s.profileName || s.profile || 1}`;
     a.addAction("Preview widget");
     a.addAction("Switch profile");
     a.addDestructiveAction("Sign out");
     a.addAction("Check connection");
+    a.addAction("Preview lock screen");
     a.addCancelAction("Close");
     const i = await a.presentSheet();
     if (i === 3) { await diagnose(); return Script.complete(); }
+    if (i === 4) { await previewLock(); return Script.complete(); }
     if (i === 1) { try { const live = await liveSession(); await chooseProfile(live); writeSession(live); } catch (e) {} }
     else if (i === 2) {
       try { const live = await liveSession(); await nuvioReq("/auth/v1/logout", {}, live.access_token); } catch (e) {}
